@@ -1,0 +1,9 @@
+apiVersion: fraud.miloapis.com/v1alpha1
+kind: FraudEvaluation
+metadata:
+  name: user-12345
+spec:
+  userRef:
+    name: user-12345
+  policyRef:
+    name: default

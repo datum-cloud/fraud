@@ -1,0 +1,75 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - activity.miloapis.com
+  resources:
+  - auditlogqueries
+  verbs:
+  - create
+- apiGroups:
+  - fraud.miloapis.com
+  resources:
+  - fraudevaluations
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fraud.miloapis.com
+  resources:
+  - fraudevaluations/finalizers
+  - fraudpolicies/finalizers
+  - fraudproviders/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - fraud.miloapis.com
+  resources:
+  - fraudevaluations/status
+  - fraudpolicies/status
+  - fraudproviders/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - fraud.miloapis.com
+  resources:
+  - fraudpolicies
+  - fraudproviders
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - iam.miloapis.com
+  resources:
+  - users
+  verbs:
+  - get
