@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	defaultEndpoint = "https://score.maxmind.com/minfraud/v2.0/score"
+	defaultEndpoint = "https://minfraud.maxmind.com/minfraud/v2.0/score"
 	defaultTimeout  = 10 * time.Second
 )
 
