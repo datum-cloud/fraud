@@ -186,14 +186,20 @@ func main() {
 		setupLog.Info("using in-cluster config")
 	}
 
+	// Leader election leases live in the local cluster, not milo.
+	var leaderElectionCfg *rest.Config
+	if platformKubeconfig != "" {
+		leaderElectionCfg = ctrl.GetConfigOrDie()
+	}
+
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
-		LeaderElection:          enableLeaderElection,
-		LeaderElectionID:        "3f838346.miloapis.com",
-		LeaderElectionNamespace: "fraud-system",
+		LeaderElection:         enableLeaderElection,
+		LeaderElectionID:       "3f838346.miloapis.com",
+		LeaderElectionConfig:   leaderElectionCfg,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
