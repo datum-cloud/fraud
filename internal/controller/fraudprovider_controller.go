@@ -19,13 +19,14 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -50,7 +51,6 @@ type FraudProviderReconciler struct {
 // +kubebuilder:rbac:groups=fraud.miloapis.com,resources=fraudproviders,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=fraud.miloapis.com,resources=fraudproviders/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=fraud.miloapis.com,resources=fraudproviders/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile validates the FraudProvider resource, bootstraps a provider client
 // from its credentials, and registers it in the shared provider registry.
@@ -72,91 +72,34 @@ func (r *FraudProviderReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Validate provider type.
 	if !supportedProviderTypes[fp.Spec.Type] {
-		r.Registry.Deregister(fp.Name)
-
-		meta.SetStatusCondition(&fp.Status.Conditions, metav1.Condition{
-			Type:               "Available",
-			Status:             metav1.ConditionFalse,
-			Reason:             "UnsupportedType",
-			Message:            fmt.Sprintf("provider type %q is not supported", fp.Spec.Type),
-			ObservedGeneration: fp.Generation,
-		})
-
-		if err := r.Status().Update(ctx, &fp); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to update status: %w", err)
-		}
-
-		return ctrl.Result{}, nil
+		return r.setProviderError(ctx, &fp, "UnsupportedType",
+			fmt.Sprintf("provider type %q is not supported", fp.Spec.Type))
 	}
 
-	// Validate that the credential secret exists.
-	secretRef := fp.Spec.Config.CredentialsRef
-	secretKey := types.NamespacedName{
-		Name:      secretRef.Name,
-		Namespace: secretRef.Namespace,
+	// Load credentials from the path declared in the FraudProvider spec.
+	credPath := fp.Spec.Config.CredentialsPath
+	if credPath == "" {
+		return r.setProviderError(ctx, &fp, "CredentialsNotConfigured",
+			"spec.config.credentialsPath is not set")
 	}
 
-	if secretKey.Namespace == "" {
-		secretKey.Namespace = "default"
+	accountIDBytes, err := os.ReadFile(filepath.Join(credPath, "accountID"))
+	if err != nil {
+		return r.setProviderError(ctx, &fp, "CredentialsReadError",
+			fmt.Sprintf("failed to read accountID from %s: %v", credPath, err))
 	}
 
-	var secret corev1.Secret
-	if err := r.Get(ctx, secretKey, &secret); err != nil {
-		r.Registry.Deregister(fp.Name)
-
-		reason := "SecretNotFound"
-		message := fmt.Sprintf("credential secret %q in namespace %q not found: %v", secretRef.Name, secretKey.Namespace, err)
-
-		if !apierrors.IsNotFound(err) {
-			reason = "SecretFetchError"
-			message = fmt.Sprintf("failed to fetch credential secret %q: %v", secretRef.Name, err)
-		}
-
-		meta.SetStatusCondition(&fp.Status.Conditions, metav1.Condition{
-			Type:               "Available",
-			Status:             metav1.ConditionFalse,
-			Reason:             reason,
-			Message:            message,
-			ObservedGeneration: fp.Generation,
-		})
-
-		if updateErr := r.Status().Update(ctx, &fp); updateErr != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to update status: %w", updateErr)
-		}
-
-		return ctrl.Result{}, nil
+	licenseKeyBytes, err := os.ReadFile(filepath.Join(credPath, "licenseKey"))
+	if err != nil {
+		return r.setProviderError(ctx, &fp, "CredentialsReadError",
+			fmt.Sprintf("failed to read licenseKey from %s: %v", credPath, err))
 	}
 
-	// Extract credentials from the Secret.
-	accountIDKey := secretRef.AccountIDKey
-	if accountIDKey == "" {
-		accountIDKey = "accountID"
-	}
-
-	licenseKeyKey := secretRef.LicenseKeyKey
-	if licenseKeyKey == "" {
-		licenseKeyKey = "licenseKey"
-	}
-
-	accountID := string(secret.Data[accountIDKey])
-	licenseKey := string(secret.Data[licenseKeyKey])
+	accountID := strings.TrimSpace(string(accountIDBytes))
+	licenseKey := strings.TrimSpace(string(licenseKeyBytes))
 
 	if accountID == "" || licenseKey == "" {
-		r.Registry.Deregister(fp.Name)
-
-		meta.SetStatusCondition(&fp.Status.Conditions, metav1.Condition{
-			Type:               "Available",
-			Status:             metav1.ConditionFalse,
-			Reason:             "InvalidCredentials",
-			Message:            fmt.Sprintf("secret %q is missing required keys %q and/or %q", secretRef.Name, accountIDKey, licenseKeyKey),
-			ObservedGeneration: fp.Generation,
-		})
-
-		if err := r.Status().Update(ctx, &fp); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to update status: %w", err)
-		}
-
-		return ctrl.Result{}, nil
+		return r.setProviderError(ctx, &fp, "InvalidCredentials", "credentials are missing accountID and/or licenseKey")
 	}
 
 	// Bootstrap the provider client based on type.
@@ -186,6 +129,25 @@ func (r *FraudProviderReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	log.Info("provider registered", "name", fp.Name, "type", fp.Spec.Type)
+
+	return ctrl.Result{}, nil
+}
+
+// setProviderError deregisters the provider and sets a failed condition.
+func (r *FraudProviderReconciler) setProviderError(ctx context.Context, fp *fraudv1alpha1.FraudProvider, reason, message string) (ctrl.Result, error) {
+	r.Registry.Deregister(fp.Name)
+
+	meta.SetStatusCondition(&fp.Status.Conditions, metav1.Condition{
+		Type:               "Available",
+		Status:             metav1.ConditionFalse,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: fp.Generation,
+	})
+
+	if err := r.Status().Update(ctx, fp); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to update status: %w", err)
+	}
 
 	return ctrl.Result{}, nil
 }

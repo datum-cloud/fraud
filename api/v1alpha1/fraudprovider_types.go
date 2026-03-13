@@ -52,9 +52,16 @@ type FraudProviderConfig struct {
 	Endpoint string `json:"endpoint,omitempty"`
 
 	// credentialsRef is a reference to a Secret containing the API credentials
-	// required by the provider.
-	// +required
-	CredentialsRef SecretReference `json:"credentialsRef"`
+	// required by the provider. Either credentialsRef or credentialsPath must
+	// be specified.
+	// +optional
+	CredentialsRef SecretReference `json:"credentialsRef,omitempty"`
+
+	// credentialsPath is the directory path where credential files are mounted.
+	// The controller reads accountID and licenseKey files from this path.
+	// Either credentialsRef or credentialsPath must be specified.
+	// +optional
+	CredentialsPath string `json:"credentialsPath,omitempty"`
 }
 
 // FraudProviderSpec defines the desired state of FraudProvider.

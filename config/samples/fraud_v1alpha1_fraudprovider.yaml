@@ -5,13 +5,5 @@ metadata:
 spec:
   type: maxmind
   config:
-    credentialsRef:
-      name: maxmind-credentials
-      namespace: fraud-system
+    credentialsPath: /etc/fraud/credentials/maxmind
   failurePolicy: FailOpen
-# ---
-# Create the credentials secret before applying:
-#   kubectl create secret generic maxmind-credentials \
-#     --namespace=fraud-system \
-#     --from-literal=accountID=YOUR_ACCOUNT_ID \
-#     --from-literal=licenseKey=YOUR_LICENSE_KEY

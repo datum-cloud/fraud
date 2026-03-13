@@ -72,7 +72,7 @@ func main() {
 	var platformKubeconfig string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&platformKubeconfig, "milo-kubeconfig", "",
-		"Path to a kubeconfig file for the Milo API server (User CRDs, Activity API). "+
+		"Path to a kubeconfig file for the Milo API server. "+
 			"If empty, the in-cluster client is used.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
