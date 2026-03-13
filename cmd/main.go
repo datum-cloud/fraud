@@ -235,7 +235,7 @@ func main() {
 	if err := (&controller.FraudEvaluationReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("fraudevaluation-controller"),
+		Recorder: mgr.GetEventRecorder("fraudevaluation-controller"),
 		Registry: registry,
 		Resolver: datasource.NewResolver(platformClient),
 	}).SetupWithManager(mgr); err != nil {

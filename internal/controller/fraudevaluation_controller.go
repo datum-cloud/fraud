@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -40,12 +40,14 @@ import (
 
 const (
 	defaultMaxHistoryEntries = 50
+
+	actionNone = "NONE"
 )
 
 // actionPriority maps decision strings to a numeric priority for comparison.
 // Higher value means higher severity.
 var actionPriority = map[string]int{
-	"NONE":       0,
+	actionNone:   0,
 	"REVIEW":     1,
 	"DEACTIVATE": 2,
 }
@@ -54,7 +56,7 @@ var actionPriority = map[string]int{
 type FraudEvaluationReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 	Registry *provider.Registry
 	Resolver *datasource.Resolver
 }
@@ -123,8 +125,9 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// 6. Execute stages in order.
+	stageResults := make([]fraudv1alpha1.StageResult, 0, len(policy.Spec.Stages))
+
 	var (
-		stageResults       []fraudv1alpha1.StageResult
 		shortCircuitActive bool
 		allMatchedActions  []string
 		compositeScore     int
@@ -226,7 +229,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 			// Record event for threshold crossing.
 			if r.Recorder != nil {
-				r.Recorder.Eventf(&eval, corev1.EventTypeWarning, "ThresholdCrossed",
+				r.Recorder.Eventf(&eval, nil, corev1.EventTypeWarning, "ThresholdCrossed", "EvaluateThreshold",
 					"Stage %q: score %d triggered %s threshold", stage.Name, maxStageScore, matchedAction)
 			}
 		}
@@ -326,10 +329,10 @@ func (r *FraudEvaluationReconciler) evaluateThresholds(thresholds []fraudv1alpha
 // Severity order: DEACTIVATE > REVIEW > NONE.
 func (r *FraudEvaluationReconciler) highestAction(actions []string) string {
 	if len(actions) == 0 {
-		return "NONE"
+		return actionNone
 	}
 
-	highest := "NONE"
+	highest := actionNone
 
 	for _, a := range actions {
 		if actionPriority[a] > actionPriority[highest] {
@@ -353,7 +356,7 @@ func (r *FraudEvaluationReconciler) determineEnforcement(mode, decision string) 
 	case "REVIEW":
 		return "REVIEW_FLAGGED"
 	default:
-		return "NONE"
+		return actionNone
 	}
 }
 

@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	fraudv1alpha1 "go.miloapis.com/fraud-operator/api/v1alpha1"
@@ -122,7 +122,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			reconciler = &FraudEvaluationReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				Registry: registry,
 			}
 		}
@@ -265,7 +265,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			reconciler = &FraudEvaluationReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				Registry: registry,
 			}
 
@@ -330,7 +330,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			reconciler = &FraudEvaluationReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				Registry: registry,
 			}
 
@@ -404,7 +404,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			reconciler = &FraudEvaluationReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				Registry: registry,
 			}
 
@@ -479,7 +479,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			reconciler = &FraudEvaluationReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				Registry: registry,
 			}
 
@@ -568,7 +568,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			reconciler = &FraudEvaluationReconciler{
 				Client:   k8sClient,
 				Scheme:   k8sClient.Scheme(),
-				Recorder: record.NewFakeRecorder(10),
+				Recorder: events.NewFakeRecorder(10),
 				Registry: registry, // empty registry
 			}
 

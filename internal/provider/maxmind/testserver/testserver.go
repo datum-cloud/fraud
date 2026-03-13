@@ -92,7 +92,7 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"code":"JSON_INVALID","error":"invalid JSON: %s"}`, err.Error())
+		_, _ = fmt.Fprintf(w, `{"code":"JSON_INVALID","error":"invalid JSON: %s"}`, err.Error())
 
 		return
 	}

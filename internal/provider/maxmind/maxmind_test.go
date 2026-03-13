@@ -38,7 +38,7 @@ func TestEvaluate_Scores(t *testing.T) {
 		wantScore int
 	}{
 		{"HighRisk", 85.0, 85},
-		{"LowRisk", 2.5, 3},       // rounds up from 2.5
+		{"LowRisk", 2.5, 3},        // rounds up from 2.5
 		{"MinScore", 0.01, 0},      // rounds down to 0
 		{"MaxScore", 99.0, 99},     // stays at 99
 		{"MidRound", 50.4, 50},     // rounds down
@@ -53,7 +53,7 @@ func TestEvaluate_Scores(t *testing.T) {
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprintf(w, `{"risk_score": %v, "id": "test-id"}`, tt.riskScore)
+				_, _ = fmt.Fprintf(w, `{"risk_score": %v, "id": "test-id"}`, tt.riskScore)
 			}))
 			defer srv.Close()
 
@@ -83,7 +83,7 @@ func TestEvaluate_Errors(t *testing.T) {
 			"ServerError",
 			func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
-				fmt.Fprint(w, `{"error": "internal server error"}`)
+				_, _ = fmt.Fprint(w, `{"error": "internal server error"}`)
 			},
 			true,
 		},
@@ -91,7 +91,7 @@ func TestEvaluate_Errors(t *testing.T) {
 			"InvalidJSON",
 			func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprint(w, `{invalid json}`)
+				_, _ = fmt.Fprint(w, `{invalid json}`)
 			},
 			true,
 		},
@@ -99,7 +99,7 @@ func TestEvaluate_Errors(t *testing.T) {
 			"Unauthorized",
 			func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusUnauthorized)
-				fmt.Fprint(w, `{"code":"AUTHORIZATION_INVALID"}`)
+				_, _ = fmt.Fprint(w, `{"code":"AUTHORIZATION_INVALID"}`)
 			},
 			true,
 		},
@@ -161,10 +161,10 @@ func TestEvaluate_AllFieldsSent(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"risk_score": 10.0, "id": "test-id"}`)
+		_, _ = fmt.Fprint(w, `{"risk_score": 10.0, "id": "test-id"}`)
 	}))
 	defer srv.Close()
 
@@ -214,10 +214,10 @@ func TestEvaluate_PartialInput(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		json.Unmarshal(body, &receivedBody)
+		_ = json.Unmarshal(body, &receivedBody)
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"risk_score": 50.0, "id": "test-id"}`)
+		_, _ = fmt.Fprint(w, `{"risk_score": 50.0, "id": "test-id"}`)
 	}))
 	defer srv.Close()
 
@@ -242,7 +242,7 @@ func TestEvaluate_EmptyInput(t *testing.T) {
 		requestReceived = true
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"risk_score": 0.01, "id": "test-id"}`)
+		_, _ = fmt.Fprint(w, `{"risk_score": 0.01, "id": "test-id"}`)
 	}))
 	defer srv.Close()
 
@@ -271,7 +271,7 @@ func TestEvaluate_AuthHeader(t *testing.T) {
 		gotUser, gotPass, _ = r.BasicAuth()
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"risk_score": 10.0, "id": "test-id"}`)
+		_, _ = fmt.Fprint(w, `{"risk_score": 10.0, "id": "test-id"}`)
 	}))
 	defer srv.Close()
 
