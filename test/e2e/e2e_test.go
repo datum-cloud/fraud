@@ -34,7 +34,7 @@ import (
 )
 
 // namespace where the project is deployed in
-const namespace = "fraud-operator-system"
+const namespace = "fraud-system"
 
 var _ = Describe("Fraud Operator", Ordered, func() {
 	var controllerPodName string

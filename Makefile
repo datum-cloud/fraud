@@ -168,11 +168,11 @@ kind-deploy: kind-load install deploy ## Build, load image, install CRDs, and de
 
 .PHONY: kind-redeploy
 kind-redeploy: kind-load ## Rebuild, reload image, and restart the controller in Kind.
-	$(KUBECTL) rollout restart deployment -n fraud-operator-system fraud-operator-controller-manager
+	$(KUBECTL) rollout restart deployment -n fraud-system fraud-controller-manager
 
 .PHONY: kind-logs
 kind-logs: ## Tail controller logs from the Kind cluster.
-	$(KUBECTL) logs -n fraud-operator-system -l control-plane=controller-manager -f
+	$(KUBECTL) logs -n fraud-system -l control-plane=controller-manager -f
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
