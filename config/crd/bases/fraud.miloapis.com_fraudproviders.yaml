@@ -45,10 +45,17 @@ spec:
                 description: config holds provider-specific configuration such as
                   endpoint and credentials.
                 properties:
+                  credentialsPath:
+                    description: |-
+                      credentialsPath is the directory path where credential files are mounted.
+                      The controller reads accountID and licenseKey files from this path.
+                      Either credentialsRef or credentialsPath must be specified.
+                    type: string
                   credentialsRef:
                     description: |-
                       credentialsRef is a reference to a Secret containing the API credentials
-                      required by the provider.
+                      required by the provider. Either credentialsRef or credentialsPath must
+                      be specified.
                     properties:
                       accountIDKey:
                         default: accountID
@@ -77,8 +84,6 @@ spec:
                       endpoint is an optional API endpoint URL override. Useful for testing
                       against mock servers or on-premise deployments.
                     type: string
-                required:
-                - credentialsRef
                 type: object
               failurePolicy:
                 default: FailOpen

@@ -36,6 +36,9 @@ import (
 // namespace where the project is deployed in
 const namespace = "fraud-system"
 
+// credentialsPath is the mount path for provider credentials inside the controller pod.
+const credentialsPath = "/etc/fraud/credentials/maxmind"
+
 var _ = Describe("Fraud Operator", Ordered, func() {
 	var controllerPodName string
 
@@ -50,6 +53,13 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 		_, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace")
 
+		By("creating e2e credentials secret")
+		cmd = exec.Command("kubectl", "create", "secret", "generic", "e2e-maxmind-creds",
+			"--namespace", namespace,
+			"--from-literal=accountID=123456",
+			"--from-literal=licenseKey=test-key")
+		_, _ = utils.Run(cmd) // may already exist
+
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
 		_, err = utils.Run(cmd)
@@ -59,6 +69,22 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		By("patching the deployment to mount credentials")
+		patch := `{"spec":{"template":{"spec":{` +
+			`"containers":[{"name":"manager","volumeMounts":[{"name":"maxmind-credentials","mountPath":"` + credentialsPath + `","readOnly":true}]}],` +
+			`"volumes":[{"name":"maxmind-credentials","secret":{"secretName":"e2e-maxmind-creds"}}]` +
+			`}}}}`
+		cmd = exec.Command("kubectl", "patch", "deployment", "fraud-controller-manager",
+			"-n", namespace, "--type=strategic", "-p", patch)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to patch deployment with credentials volume")
+
+		By("waiting for controller rollout")
+		cmd = exec.Command("kubectl", "rollout", "status", "deployment", "fraud-controller-manager",
+			"-n", namespace, "--timeout=90s")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Controller rollout failed")
 	})
 
 	AfterAll(func() {
@@ -68,6 +94,11 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 
 		By("uninstalling CRDs")
 		cmd = exec.Command("make", "uninstall", "ignore-not-found=true")
+		_, _ = utils.Run(cmd)
+
+		By("cleaning up e2e credentials secret")
+		cmd = exec.Command("kubectl", "delete", "secret", "e2e-maxmind-creds",
+			"-n", namespace, "--ignore-not-found")
 		_, _ = utils.Run(cmd)
 	})
 
@@ -139,7 +170,6 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 				{"kubectl", "delete", "fraudevaluation", "test-user-1", "--ignore-not-found"},
 				{"kubectl", "delete", "fraudpolicy", "e2e-policy", "--ignore-not-found"},
 				{"kubectl", "delete", "fraudprovider", "e2e-maxmind", "--ignore-not-found"},
-				{"kubectl", "delete", "secret", "e2e-maxmind-creds", "-n", namespace, "--ignore-not-found"},
 			}
 			for _, args := range cmds {
 				cmd := exec.Command(args[0], args[1:]...)
@@ -148,16 +178,8 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 		})
 
 		It("should create and reconcile a FraudProvider", func() {
-			By("creating a dummy credentials secret")
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "e2e-maxmind-creds",
-				"--namespace", namespace,
-				"--from-literal=accountID=123456",
-				"--from-literal=licenseKey=test-key")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
 			By("creating a FraudProvider")
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = jsonReader(map[string]interface{}{
 				"apiVersion": "fraud.miloapis.com/v1alpha1",
 				"kind":       "FraudProvider",
@@ -165,15 +187,12 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 				"spec": map[string]interface{}{
 					"type": "maxmind",
 					"config": map[string]interface{}{
-						"credentialsRef": map[string]interface{}{
-							"name":      "e2e-maxmind-creds",
-							"namespace": namespace,
-						},
+						"credentialsPath": credentialsPath,
 					},
 					"failurePolicy": "FailOpen",
 				},
 			})
-			_, err = utils.Run(cmd)
+			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("verifying the FraudProvider becomes Available")
@@ -188,14 +207,7 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 
 		It("should create and reconcile a FraudPolicy", func() {
 			By("creating prerequisite FraudProvider")
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "e2e-maxmind-creds",
-				"--namespace", namespace,
-				"--from-literal=accountID=123456",
-				"--from-literal=licenseKey=test-key")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = jsonReader(map[string]interface{}{
 				"apiVersion": "fraud.miloapis.com/v1alpha1",
 				"kind":       "FraudProvider",
@@ -203,15 +215,12 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 				"spec": map[string]interface{}{
 					"type": "maxmind",
 					"config": map[string]interface{}{
-						"credentialsRef": map[string]interface{}{
-							"name":      "e2e-maxmind-creds",
-							"namespace": namespace,
-						},
+						"credentialsPath": credentialsPath,
 					},
 					"failurePolicy": "FailOpen",
 				},
 			})
-			_, err = utils.Run(cmd)
+			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Wait for provider to be available first.
@@ -260,14 +269,7 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 
 		It("should create a FraudEvaluation and reconcile it", func() {
 			By("creating prerequisite resources")
-			cmd := exec.Command("kubectl", "create", "secret", "generic", "e2e-maxmind-creds",
-				"--namespace", namespace,
-				"--from-literal=accountID=123456",
-				"--from-literal=licenseKey=test-key")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
 			cmd.Stdin = jsonReader(map[string]interface{}{
 				"apiVersion": "fraud.miloapis.com/v1alpha1",
 				"kind":       "FraudProvider",
@@ -275,15 +277,12 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 				"spec": map[string]interface{}{
 					"type": "maxmind",
 					"config": map[string]interface{}{
-						"credentialsRef": map[string]interface{}{
-							"name":      "e2e-maxmind-creds",
-							"namespace": namespace,
-						},
+						"credentialsPath": credentialsPath,
 					},
 					"failurePolicy": "FailOpen",
 				},
 			})
-			_, err = utils.Run(cmd)
+			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
 			cmd = exec.Command("kubectl", "apply", "-f", "-")
@@ -325,11 +324,6 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("verifying the FraudEvaluation is reconciled by the controller")
-			// The controller will attempt to evaluate but no MaxMind provider
-			// implementation is registered at runtime yet (dynamic provider
-			// bootstrap from CRs is a future enhancement). The evaluation
-			// should reach Error phase because the provider type has no
-			// registered implementation.
 			Eventually(func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "fraudevaluation", "test-user-1",
 					"-o", "jsonpath={.status.phase}")
@@ -344,7 +338,6 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 				"-o", "jsonpath={.status.conditions[0].reason}")
 			output, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
-			// The controller sets a condition regardless of success or failure.
 			Expect(output).NotTo(BeEmpty(), "condition reason should be set")
 
 			By("verifying kubectl get fraudevaluations works with print columns")
