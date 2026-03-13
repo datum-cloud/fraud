@@ -38,13 +38,13 @@ func TestEvaluate_Scores(t *testing.T) {
 		wantScore int
 	}{
 		{"HighRisk", 85.0, 85},
-		{"LowRisk", 2.5, 3},        // rounds up from 2.5
-		{"MinScore", 0.01, 0},      // rounds down to 0
-		{"MaxScore", 99.0, 99},     // stays at 99
-		{"MidRound", 50.4, 50},     // rounds down
-		{"UpperRound", 50.5, 51},   // rounds up (banker's: .5 rounds to even, but math.Round always rounds .5 up)
+		{"LowRisk", 2.5, 3},         // rounds up from 2.5
+		{"MinScore", 0.01, 0},       // rounds down to 0
+		{"MaxScore", 99.0, 99},      // stays at 99
+		{"MidRound", 50.4, 50},      // rounds down
+		{"UpperRound", 50.5, 51},    // rounds up (banker's: .5 rounds to even, but math.Round always rounds .5 up)
 		{"OverHundred", 150.0, 100}, // clamped to 100
-		{"Negative", -5.0, 0},      // clamped to 0
+		{"Negative", -5.0, 0},       // clamped to 0
 	}
 
 	for _, tt := range tests {

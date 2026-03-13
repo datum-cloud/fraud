@@ -82,7 +82,7 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	authUser, authPass, ok := r.BasicAuth()
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, `{"code":"AUTHORIZATION_INVALID","error":"Invalid auth"}`)
+		_, _ = fmt.Fprint(w, `{"code":"AUTHORIZATION_INVALID","error":"Invalid auth"}`)
 
 		return
 	}
@@ -109,7 +109,7 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	if s.FailNext > 0 {
 		s.FailNext--
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, `{"code":"SERVER_ERROR","error":"internal server error"}`)
+		_, _ = fmt.Fprint(w, `{"code":"SERVER_ERROR","error":"internal server error"}`)
 
 		return
 	}
