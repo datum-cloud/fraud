@@ -1,11 +1,7 @@
-name: Publish Docker Image
+name: Publish
 
 on:
-  # Trigger on push
   push:
-  # Trigger on all pull requests
-  pull_request:
-  # Trigger when a release is published
   release:
     types: ['published']
 
@@ -16,18 +12,21 @@ jobs:
       contents: read
       packages: write
       attestations: write
-    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.5.1
+    uses: datum-cloud/actions/.github/workflows/publish-docker.yaml@v1.9.0
     with:
       image-name: fraud-operator
     secrets: inherit
 
   publish-kustomize-bundles:
+    needs: [publish-container-image]
     permissions:
       id-token: write
       contents: read
       packages: write
-    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.5.1
+    uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.9.0
     with:
       bundle-name: ghcr.io/datum-cloud/fraud-operator-kustomize
       bundle-path: config
+      image-overlays: config/manager
+      image-name: ghcr.io/datum-cloud/fraud-operator
     secrets: inherit
