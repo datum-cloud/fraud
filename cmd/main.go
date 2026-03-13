@@ -28,9 +28,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -166,7 +166,27 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	// Build the REST config. When --milo-kubeconfig is provided the manager
+	// talks directly to the Milo API server (where the CRDs are installed).
+	// Otherwise fall back to the in-cluster config for local development.
+	var (
+		restCfg *rest.Config
+		err     error
+	)
+	if platformKubeconfig != "" {
+		restCfg, err = clientcmd.BuildConfigFromFlags("", platformKubeconfig)
+		if err != nil {
+			setupLog.Error(err, "unable to build milo kubeconfig", "path", platformKubeconfig)
+			os.Exit(1)
+		}
+
+		setupLog.Info("using milo kubeconfig", "path", platformKubeconfig)
+	} else {
+		restCfg = ctrl.GetConfigOrDie()
+		setupLog.Info("using in-cluster config")
+	}
+
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -188,29 +208,6 @@ func main() {
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
-	}
-
-	// Build the platform client for querying User CRDs and the Activity API.
-	// If --platform-kubeconfig is set, use it; otherwise fall back to the
-	// in-cluster client.
-	var platformClient client.Client
-	if platformKubeconfig != "" {
-		cfg, err := clientcmd.BuildConfigFromFlags("", platformKubeconfig)
-		if err != nil {
-			setupLog.Error(err, "unable to build platform kubeconfig", "path", platformKubeconfig)
-			os.Exit(1)
-		}
-
-		platformClient, err = client.New(cfg, client.Options{Scheme: scheme})
-		if err != nil {
-			setupLog.Error(err, "unable to create platform client")
-			os.Exit(1)
-		}
-
-		setupLog.Info("using external platform kubeconfig", "path", platformKubeconfig)
-	} else {
-		platformClient = mgr.GetClient()
-		setupLog.Info("using in-cluster client for platform APIs")
 	}
 
 	// Shared provider registry: the FraudProvider controller populates it,
@@ -237,7 +234,7 @@ func main() {
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("fraudevaluation-controller"),
 		Registry: registry,
-		Resolver: datasource.NewResolver(platformClient),
+		Resolver: datasource.NewResolver(mgr.GetClient()),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FraudEvaluation")
 		os.Exit(1)
