@@ -35,7 +35,7 @@ type Input struct {
 // for FailOpen semantics where we log the error but continue with score=0.
 type Result struct {
 	// Score is the normalized fraud risk score (0-100).
-	Score int
+	Score float64
 	// RawResponse is the raw provider response for debugging.
 	RawResponse string
 	// Error is set if the provider call failed.

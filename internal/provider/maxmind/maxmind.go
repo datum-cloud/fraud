@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"time"
 
@@ -153,7 +152,7 @@ func (c *Client) Evaluate(ctx context.Context, input provider.Input) provider.Re
 		}
 	}
 
-	score := int(math.Round(mfResp.RiskScore))
+	score := mfResp.RiskScore
 	if score < 0 {
 		score = 0
 	}

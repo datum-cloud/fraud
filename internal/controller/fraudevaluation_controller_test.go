@@ -80,7 +80,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			}
 		})
 
-		createResources := func(score int, failurePolicy string, mode string) {
+		createResources := func(score float64, failurePolicy string, mode string) {
 			// Create FraudProvider CR.
 			fp := &fraudv1alpha1.FraudProvider{
 				ObjectMeta: metav1.ObjectMeta{Name: provName},
@@ -147,12 +147,12 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			// Re-fetch to see status.
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-low"}, eval)).To(Succeed())
 			Expect(eval.Status.Phase).To(Equal("Completed"))
-			Expect(eval.Status.CompositeScore).To(Equal(15))
+			Expect(eval.Status.CompositeScore).To(Equal("15.00"))
 			Expect(eval.Status.Decision).To(Equal("NONE"))
 			Expect(eval.Status.EnforcementAction).To(Equal("OBSERVED"))
 			Expect(eval.Status.StageResults).To(HaveLen(1))
 			Expect(eval.Status.StageResults[0].ProviderResults).To(HaveLen(1))
-			Expect(eval.Status.StageResults[0].ProviderResults[0].Score).To(Equal(15))
+			Expect(eval.Status.StageResults[0].ProviderResults[0].Score).To(Equal("15.00"))
 			Expect(eval.Status.History).To(HaveLen(1))
 		})
 
@@ -175,7 +175,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-review"}, eval)).To(Succeed())
 			Expect(eval.Status.Phase).To(Equal("Completed"))
-			Expect(eval.Status.CompositeScore).To(Equal(75))
+			Expect(eval.Status.CompositeScore).To(Equal("75.00"))
 			Expect(eval.Status.Decision).To(Equal("REVIEW"))
 			Expect(eval.Status.EnforcementAction).To(Equal("OBSERVED"))
 		})
@@ -285,7 +285,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-failopen"}, eval)).To(Succeed())
 			Expect(eval.Status.Phase).To(Equal("Completed"))
-			Expect(eval.Status.CompositeScore).To(Equal(0))
+			Expect(eval.Status.CompositeScore).To(Equal("0.00"))
 			Expect(eval.Status.Decision).To(Equal("NONE"))
 			Expect(eval.Status.StageResults[0].ProviderResults[0].Error).To(ContainSubstring("connection refused"))
 			Expect(eval.Status.StageResults[0].ProviderResults[0].FailurePolicyApplied).To(Equal("FailOpen"))

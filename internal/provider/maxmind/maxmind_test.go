@@ -35,14 +35,14 @@ func TestEvaluate_Scores(t *testing.T) {
 	tests := []struct {
 		name      string
 		riskScore float64
-		wantScore int
+		wantScore float64
 	}{
-		{"HighRisk", 85.0, 85},
-		{"LowRisk", 2.5, 3},         // rounds up from 2.5
-		{"MinScore", 0.01, 0},       // rounds down to 0
-		{"MaxScore", 99.0, 99},      // stays at 99
-		{"MidRound", 50.4, 50},      // rounds down
-		{"UpperRound", 50.5, 51},    // rounds up (banker's: .5 rounds to even, but math.Round always rounds .5 up)
+		{"HighRisk", 85.0, 85.0},
+		{"LowRisk", 2.5, 2.5},
+		{"MinScore", 0.01, 0.01},
+		{"MaxScore", 99.0, 99.0},
+		{"MidRound", 50.4, 50.4},
+		{"UpperRound", 50.5, 50.5},
 		{"OverHundred", 150.0, 100}, // clamped to 100
 		{"Negative", -5.0, 0},       // clamped to 0
 	}
@@ -65,7 +65,7 @@ func TestEvaluate_Scores(t *testing.T) {
 			}
 
 			if result.Score != tt.wantScore {
-				t.Errorf("score = %d, want %d", result.Score, tt.wantScore)
+				t.Errorf("score = %v, want %v", result.Score, tt.wantScore)
 			}
 		})
 	}
@@ -257,8 +257,8 @@ func TestEvaluate_EmptyInput(t *testing.T) {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
 
-	if result.Score != 0 {
-		t.Errorf("score = %d, want 0 (rounded from 0.01)", result.Score)
+	if result.Score != 0.01 {
+		t.Errorf("score = %v, want 0.01", result.Score)
 	}
 }
 

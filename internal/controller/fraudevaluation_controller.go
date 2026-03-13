@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -130,7 +131,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	var (
 		shortCircuitActive bool
 		allMatchedActions  []string
-		compositeScore     int
+		compositeScore     float64
 	)
 
 	for _, stage := range policy.Spec.Stages {
@@ -148,7 +149,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 
 		var (
-			maxStageScore    int
+			maxStageScore    float64
 			providerResults  []fraudv1alpha1.ProviderResult
 			providerDegraded bool
 		)
@@ -175,7 +176,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 			pr := fraudv1alpha1.ProviderResult{
 				Provider:    sp.ProviderRef.Name,
-				Score:       result.Score,
+				Score:       strconv.FormatFloat(result.Score, 'f', 2, 64),
 				RawResponse: result.RawResponse,
 				Duration:    duration.Round(time.Millisecond).String(),
 			}
@@ -201,7 +202,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				}
 
 				// FailOpen: record the error, continue with score = 0.
-				pr.Score = 0
+				pr.Score = "0.00"
 				providerDegraded = true
 
 				log.Info("provider error with FailOpen policy, continuing", "provider", sp.ProviderRef.Name, "error", result.Error)
@@ -209,8 +210,8 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 			providerResults = append(providerResults, pr)
 
-			if pr.Score > maxStageScore {
-				maxStageScore = pr.Score
+			if result.Score > maxStageScore {
+				maxStageScore = result.Score
 			}
 		}
 
@@ -223,19 +224,19 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 
 		// Check thresholds: find the highest matching threshold.
-		matchedAction := r.evaluateThresholds(stage.Thresholds, maxStageScore)
+		matchedAction := r.evaluateThresholds(stage.Thresholds, int(maxStageScore))
 		if matchedAction != "" {
 			allMatchedActions = append(allMatchedActions, matchedAction)
 
 			// Record event for threshold crossing.
 			if r.Recorder != nil {
 				r.Recorder.Eventf(&eval, nil, corev1.EventTypeWarning, "ThresholdCrossed", "EvaluateThreshold",
-					"Stage %q: score %d triggered %s threshold", stage.Name, maxStageScore, matchedAction)
+					"Stage %q: score %.2f triggered %s threshold", stage.Name, maxStageScore, matchedAction)
 			}
 		}
 
 		// Check short-circuit configuration.
-		if stage.ShortCircuit != nil && maxStageScore < stage.ShortCircuit.SkipWhenBelow {
+		if stage.ShortCircuit != nil && int(maxStageScore) < stage.ShortCircuit.SkipWhenBelow {
 			shortCircuitActive = true
 			log.V(1).Info("short-circuit activated", "stage", stage.Name, "score", maxStageScore, "skipWhenBelow", stage.ShortCircuit.SkipWhenBelow)
 		}
@@ -263,9 +264,11 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// 9. Add to history (prepend, trim to maxEntries).
 	now := metav1.Now()
 
+	compositeScoreStr := strconv.FormatFloat(compositeScore, 'f', 2, 64)
+
 	historyEntry := fraudv1alpha1.HistoryEntry{
 		Timestamp:      now,
-		CompositeScore: compositeScore,
+		CompositeScore: compositeScoreStr,
 		Decision:       decision,
 		Trigger:        eval.Status.Trigger,
 	}
@@ -277,7 +280,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// 10. Set phase to Completed and update all status fields.
 	eval.Status.Phase = "Completed"
-	eval.Status.CompositeScore = compositeScore
+	eval.Status.CompositeScore = compositeScoreStr
 	eval.Status.Decision = decision
 	eval.Status.EnforcementAction = enforcementAction
 	eval.Status.LastEvaluationTime = &now
@@ -287,7 +290,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		Type:               "Available",
 		Status:             metav1.ConditionTrue,
 		Reason:             "EvaluationCompleted",
-		Message:            fmt.Sprintf("Evaluation completed with score %d, decision %s", compositeScore, decision),
+		Message:            fmt.Sprintf("Evaluation completed with score %.2f, decision %s", compositeScore, decision),
 		ObservedGeneration: eval.Generation,
 	})
 

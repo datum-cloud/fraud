@@ -55,10 +55,8 @@ type ProviderResult struct {
 	// provider is the name of the FraudProvider that produced this result.
 	Provider string `json:"provider"`
 
-	// score is the fraud risk score returned by the provider, normalized to 0-100.
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=100
-	Score int `json:"score"`
+	// score is the fraud risk score returned by the provider (0-100).
+	Score string `json:"score"`
 
 	// error contains the error message if the provider call failed.
 	// +optional
@@ -99,9 +97,7 @@ type HistoryEntry struct {
 	Timestamp metav1.Time `json:"timestamp"`
 
 	// compositeScore is the overall fraud score from this evaluation run.
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=100
-	CompositeScore int `json:"compositeScore"`
+	CompositeScore string `json:"compositeScore"`
 
 	// decision is the fraud decision reached in this evaluation run.
 	Decision string `json:"decision"`
@@ -120,9 +116,7 @@ type FraudEvaluationStatus struct {
 	// compositeScore is the overall fraud risk score (0-100), taken as the highest
 	// score from all providers across all stages.
 	// +optional
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=100
-	CompositeScore int `json:"compositeScore,omitempty"`
+	CompositeScore string `json:"compositeScore,omitempty"`
 
 	// decision is the final fraud decision based on the composite score and
 	// policy thresholds.
@@ -168,7 +162,7 @@ type FraudEvaluationStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`,description="Current evaluation phase"
-// +kubebuilder:printcolumn:name="Score",type=integer,JSONPath=`.status.compositeScore`,description="Composite fraud score (0-100)"
+// +kubebuilder:printcolumn:name="Score",type=string,JSONPath=`.status.compositeScore`,description="Composite fraud score (0-100)"
 // +kubebuilder:printcolumn:name="Decision",type=string,JSONPath=`.status.decision`,description="Final fraud decision"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

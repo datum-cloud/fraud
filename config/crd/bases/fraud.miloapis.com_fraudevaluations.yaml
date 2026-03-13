@@ -22,7 +22,7 @@ spec:
     - description: Composite fraud score (0-100)
       jsonPath: .status.compositeScore
       name: Score
-      type: integer
+      type: string
     - description: Final fraud decision
       jsonPath: .status.decision
       name: Decision
@@ -92,9 +92,7 @@ spec:
                 description: |-
                   compositeScore is the overall fraud risk score (0-100), taken as the highest
                   score from all providers across all stages.
-                maximum: 100
-                minimum: 0
-                type: integer
+                type: string
               conditions:
                 description: |-
                   conditions represent the current state of the FraudEvaluation resource.
@@ -190,9 +188,7 @@ spec:
                     compositeScore:
                       description: compositeScore is the overall fraud score from
                         this evaluation run.
-                      maximum: 100
-                      minimum: 0
-                      type: integer
+                      type: string
                     decision:
                       description: decision is the fraud decision reached in this
                         evaluation run.
@@ -267,10 +263,8 @@ spec:
                             type: string
                           score:
                             description: score is the fraud risk score returned by
-                              the provider, normalized to 0-100.
-                            maximum: 100
-                            minimum: 0
-                            type: integer
+                              the provider (0-100).
+                            type: string
                         required:
                         - provider
                         - score

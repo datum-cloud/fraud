@@ -56,13 +56,21 @@ func (r *Resolver) Resolve(ctx context.Context, userName string) (provider.Input
 
 	// Fetch the User resource.
 	if err := r.resolveUser(ctx, userName, &input); err != nil {
-		log.V(1).Info("failed to resolve user data, continuing with empty user fields", "user", userName, "error", err)
+		log.Info("failed to resolve user data, continuing with empty user fields", "user", userName, "error", err)
 	}
 
 	// Fetch the most recent audit log entry for the user.
 	if err := r.resolveAuditLog(ctx, userName, &input); err != nil {
-		log.V(1).Info("failed to resolve audit log data, continuing with empty audit fields", "user", userName, "error", err)
+		log.Info("failed to resolve audit log data, continuing with empty audit fields", "user", userName, "error", err)
 	}
+
+	log.Info("resolved provider input",
+		"user", userName,
+		"email", input.EmailAddress,
+		"emailDomain", input.EmailDomain,
+		"ip", input.IPAddress,
+		"userAgent", input.UserAgent,
+	)
 
 	return input, nil
 }
@@ -96,7 +104,7 @@ func (r *Resolver) resolveAuditLog(ctx context.Context, userName string, input *
 		Spec: activityv1alpha1.AuditLogQuerySpec{
 			StartTime: "now-30d",
 			EndTime:   "now",
-			Filter:    fmt.Sprintf("user.username == '%s'", userName),
+			Filter:    fmt.Sprintf("user.uid == '%s'", userName),
 			Limit:     1,
 		},
 	}
