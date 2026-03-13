@@ -71,8 +71,8 @@ func main() {
 	var enableHTTP2 bool
 	var platformKubeconfig string
 	var tlsOpts []func(*tls.Config)
-	flag.StringVar(&platformKubeconfig, "platform-kubeconfig", "",
-		"Path to a kubeconfig file for the platform management plane (User CRDs, Activity API). "+
+	flag.StringVar(&platformKubeconfig, "milo-kubeconfig", "",
+		"Path to a kubeconfig file for the Milo API server (User CRDs, Activity API). "+
 			"If empty, the in-cluster client is used.")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
