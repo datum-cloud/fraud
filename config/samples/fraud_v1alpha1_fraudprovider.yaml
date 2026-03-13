@@ -1,0 +1,17 @@
+apiVersion: fraud.miloapis.com/v1alpha1
+kind: FraudProvider
+metadata:
+  name: maxmind
+spec:
+  type: maxmind
+  config:
+    credentialsRef:
+      name: maxmind-credentials
+      namespace: fraud-operator-system
+  failurePolicy: FailOpen
+# ---
+# Create the credentials secret before applying:
+#   kubectl create secret generic maxmind-credentials \
+#     --namespace=fraud-operator-system \
+#     --from-literal=accountID=YOUR_ACCOUNT_ID \
+#     --from-literal=licenseKey=YOUR_LICENSE_KEY
