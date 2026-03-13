@@ -335,7 +335,8 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 					"-o", "jsonpath={.status.phase}")
 				output, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).NotTo(BeEmpty(), "phase should be set by the controller")
+				g.Expect(output).To(Or(Equal("Completed"), Equal("Error")),
+					"phase should reach a terminal state")
 			}).Should(Succeed())
 
 			By("checking the FraudEvaluation status has conditions set by the controller")
