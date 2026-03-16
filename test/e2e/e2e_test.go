@@ -54,8 +54,11 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 
 		By("patching the deployment to mount credentials")
 		patch := `{"spec":{"template":{"spec":{` +
-			`"containers":[{"name":"manager","volumeMounts":[{"name":"maxmind-credentials","mountPath":"` + credentialsPath + `","readOnly":true}]}],` +
-			`"volumes":[{"name":"maxmind-credentials","secret":{"secretName":"e2e-maxmind-creds"}}]` +
+			`"containers":[{"name":"manager","volumeMounts":[` +
+			`{"name":"maxmind-credentials","mountPath":"` + credentialsPath + `","readOnly":true}` +
+			`]}],` +
+			`"volumes":[{"name":"maxmind-credentials",` +
+			`"secret":{"secretName":"e2e-maxmind-creds"}}]` +
 			`}}}}`
 		cmd = exec.Command("kubectl", "patch", "deployment", "fraud-controller-manager",
 			"-n", namespace, "--type=strategic", "-p", patch)
