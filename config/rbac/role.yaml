@@ -73,3 +73,5 @@ rules:
   - users
   verbs:
   - get
+  - list
+  - watch
