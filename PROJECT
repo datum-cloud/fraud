@@ -6,8 +6,8 @@ cliVersion: 4.9.0
 domain: miloapis.com
 layout:
 - go.kubebuilder.io/v4
-projectName: fraud-operator
-repo: go.miloapis.com/fraud-operator
+projectName: fraud
+repo: go.miloapis.com/fraud
 resources:
 - api:
     crdVersion: v1
@@ -16,7 +16,7 @@ resources:
   domain: miloapis.com
   group: fraud
   kind: FraudProvider
-  path: go.miloapis.com/fraud-operator/api/v1alpha1
+  path: go.miloapis.com/fraud/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -25,7 +25,7 @@ resources:
   domain: miloapis.com
   group: fraud
   kind: FraudPolicy
-  path: go.miloapis.com/fraud-operator/api/v1alpha1
+  path: go.miloapis.com/fraud/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
@@ -34,6 +34,6 @@ resources:
   domain: miloapis.com
   group: fraud
   kind: FraudEvaluation
-  path: go.miloapis.com/fraud-operator/api/v1alpha1
+  path: go.miloapis.com/fraud/api/v1alpha1
   version: v1alpha1
 version: "3"
