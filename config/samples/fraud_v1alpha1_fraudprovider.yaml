@@ -1,0 +1,9 @@
+apiVersion: fraud.miloapis.com/v1alpha1
+kind: FraudProvider
+metadata:
+  name: maxmind
+spec:
+  type: maxmind
+  config:
+    credentialsPath: /etc/fraud/credentials/maxmind
+  failurePolicy: FailOpen

@@ -1,0 +1,25 @@
+apiVersion: fraud.miloapis.com/v1alpha1
+kind: FraudPolicy
+metadata:
+  name: default
+spec:
+  stages:
+    - name: risk-analysis
+      providers:
+        - providerRef:
+            name: maxmind
+      thresholds:
+        - minScore: 70
+          action: REVIEW
+        - minScore: 90
+          action: DEACTIVATE
+      required: false
+      shortCircuit:
+        skipWhenBelow: 20
+  enforcement:
+    mode: OBSERVE
+  triggers:
+    - type: Event
+      event: UserCreated
+  historyRetention:
+    maxEntries: 50

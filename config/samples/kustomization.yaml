@@ -1,0 +1,6 @@
+## Append samples of your project ##
+resources:
+- fraud_v1alpha1_fraudprovider.yaml
+- fraud_v1alpha1_fraudpolicy.yaml
+- fraud_v1alpha1_fraudevaluation.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

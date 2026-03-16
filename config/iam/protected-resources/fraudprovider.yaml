@@ -1,0 +1,19 @@
+---
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fraud.miloapis.com-fraudprovider
+spec:
+  serviceRef:
+    name: "fraud.miloapis.com"
+  kind: FraudProvider
+  plural: fraudproviders
+  singular: fraudprovider
+  permissions:
+    - list
+    - get
+    - create
+    - update
+    - delete
+    - patch
+    - watch
