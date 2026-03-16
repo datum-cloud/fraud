@@ -1,0 +1,19 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fraud.miloapis.com-viewer
+  annotations:
+    kubernetes.io/display-name: Fraud Viewer
+    kubernetes.io/description: "View access to all fraud resources"
+spec:
+  launchStage: Alpha
+  includedPermissions:
+    - fraud.miloapis.com/fraudpolicies.list
+    - fraud.miloapis.com/fraudpolicies.get
+    - fraud.miloapis.com/fraudpolicies.watch
+    - fraud.miloapis.com/fraudproviders.list
+    - fraud.miloapis.com/fraudproviders.get
+    - fraud.miloapis.com/fraudproviders.watch
+    - fraud.miloapis.com/fraudevaluations.list
+    - fraud.miloapis.com/fraudevaluations.get
+    - fraud.miloapis.com/fraudevaluations.watch

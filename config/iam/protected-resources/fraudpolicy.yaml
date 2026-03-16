@@ -1,0 +1,19 @@
+---
+apiVersion: iam.miloapis.com/v1alpha1
+kind: ProtectedResource
+metadata:
+  name: fraud.miloapis.com-fraudpolicy
+spec:
+  serviceRef:
+    name: "fraud.miloapis.com"
+  kind: FraudPolicy
+  plural: fraudpolicies
+  singular: fraudpolicy
+  permissions:
+    - list
+    - get
+    - create
+    - update
+    - delete
+    - patch
+    - watch

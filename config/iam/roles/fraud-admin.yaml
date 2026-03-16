@@ -1,0 +1,24 @@
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: fraud.miloapis.com-admin
+  annotations:
+    kubernetes.io/display-name: Fraud Admin
+    kubernetes.io/description: "Full access to all fraud resources"
+spec:
+  launchStage: Alpha
+  inheritedRoles:
+    - name: fraud.miloapis.com-viewer
+  includedPermissions:
+    - fraud.miloapis.com/fraudpolicies.create
+    - fraud.miloapis.com/fraudpolicies.update
+    - fraud.miloapis.com/fraudpolicies.delete
+    - fraud.miloapis.com/fraudpolicies.patch
+    - fraud.miloapis.com/fraudproviders.create
+    - fraud.miloapis.com/fraudproviders.update
+    - fraud.miloapis.com/fraudproviders.delete
+    - fraud.miloapis.com/fraudproviders.patch
+    - fraud.miloapis.com/fraudevaluations.create
+    - fraud.miloapis.com/fraudevaluations.update
+    - fraud.miloapis.com/fraudevaluations.delete
+    - fraud.miloapis.com/fraudevaluations.patch
