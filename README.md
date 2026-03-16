@@ -1,121 +1,136 @@
-# fraud
-// TODO(user): Add simple overview of use/purpose
+# Fraud Service
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+A Kubernetes operator for fraud detection and risk evaluation, built with [Kubebuilder](https://book.kubebuilder.io). It provides a pipeline-based approach to evaluating user fraud risk using pluggable providers (currently [MaxMind minFraud](https://www.maxmind.com/en/solutions/minfraud-services)).
+
+## Architecture
+
+The service is composed of three Custom Resource Definitions (CRDs) that work together:
+
+```
+FraudProvider          FraudPolicy              FraudEvaluation
+┌──────────────┐      ┌───────────────────┐     ┌──────────────────────┐
+│ Configures a │◄─────│ Defines pipeline  │◄────│ Evaluates a user     │
+│ provider     │      │ stages, thresholds│     │ against the policy   │
+│ (e.g.MaxMind)│      │ & enforcement mode│     │ and records results  │
+└──────────────┘      └───────────────────┘     └──────────────────────┘
+```
+
+### CRDs
+
+#### FraudProvider
+
+Configures a fraud detection provider backend.
+
+| Field | Description |
+|-------|-------------|
+| `spec.type` | Provider type (`maxmind`) |
+| `spec.failurePolicy` | Behavior on provider failure — `FailOpen` (score 0) or `FailClosed` (high risk) |
+| `spec.config.endpoint` | Optional API endpoint override |
+| `spec.config.credentialsRef` | Reference to a Secret containing API credentials |
+
+#### FraudPolicy
+
+Defines the evaluation pipeline — stages, score thresholds, enforcement mode, and history retention. Typically a singleton per cluster.
+
+| Field | Description |
+|-------|-------------|
+| `spec.stages[]` | Ordered evaluation pipeline stages |
+| `spec.stages[].providers[]` | Provider references to invoke in this stage |
+| `spec.stages[].thresholds[]` | Score thresholds that trigger actions (`REVIEW`, `DEACTIVATE`) |
+| `spec.stages[].shortCircuit.skipWhenBelow` | Skip subsequent non-required stages if max score is below this value |
+| `spec.enforcement.mode` | `OBSERVE` (log only) or `AUTO` (enforce actions) |
+| `spec.historyRetention.maxEntries` | Max evaluation history entries to retain (default: 50) |
+
+#### FraudEvaluation
+
+Represents the fraud evaluation state for a specific user. Created to trigger an evaluation, then updated with results as the pipeline runs.
+
+| Field | Description |
+|-------|-------------|
+| `spec.userRef.name` | User being evaluated |
+| `spec.policyRef.name` | Policy to evaluate against |
+| `status.phase` | `Pending` → `Running` → `Completed` or `Error` |
+| `status.compositeScore` | Overall risk score (0–100, highest across all providers) |
+| `status.decision` | `NONE`, `REVIEW`, or `DEACTIVATE` |
+| `status.enforcementAction` | Action taken: `NONE`, `OBSERVED`, `REVIEW_FLAGGED`, `DEACTIVATED` |
+| `status.stageResults[]` | Per-stage and per-provider detailed results |
+| `status.history[]` | Previous evaluation results for audit |
+
+### Controllers
+
+- **FraudProviderReconciler** — Validates provider config, loads credentials, and registers providers in a shared in-memory registry.
+- **FraudPolicyReconciler** — Validates that all referenced providers exist and are available, sets policy conditions accordingly.
+- **FraudEvaluationReconciler** — Executes the evaluation pipeline: invokes providers, computes composite scores, applies thresholds, enforces decisions, and maintains evaluation history.
 
 ## Getting Started
 
 ### Prerequisites
-- go version v1.24.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- Go 1.24+
+- Docker 17.03+
+- kubectl v1.11.3+
+- Access to a Kubernetes cluster
 
-```sh
-make docker-build docker-push IMG=<some-registry>/fraud:tag
-```
-
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
+### Development
 
 ```sh
+# Install CRDs into the cluster
 make install
-```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+# Run the controller locally
+make run
 
-```sh
-make deploy IMG=<some-registry>/fraud:tag
-```
-
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
+# Apply sample resources
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+### Deployment
 
 ```sh
-kubectl delete -k config/samples/
+# Build and push the controller image
+make docker-build docker-push IMG=<registry>/fraud:tag
+
+# Deploy to the cluster
+make deploy IMG=<registry>/fraud:tag
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+### Testing
 
 ```sh
-make uninstall
+# Run unit tests
+make test
+
+# Run e2e tests (requires a running cluster)
+make test-e2e
 ```
 
-**UnDeploy the controller from the cluster:**
+### Uninstall
 
 ```sh
-make undeploy
+kubectl delete -k config/samples/   # Remove sample CRs
+make uninstall                       # Remove CRDs
+make undeploy                        # Remove the controller
 ```
 
-## Project Distribution
+## Project Structure
 
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/fraud:tag
 ```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/fraud/<tag or branch>/dist/install.yaml
+├── api/v1alpha1/          # CRD type definitions
+├── cmd/                   # Controller entrypoint
+├── config/
+│   ├── crd/               # Generated CRD manifests
+│   ├── default/           # Default Kustomize deployment
+│   ├── iam/               # IAM protected resources & roles
+│   ├── manager/           # Controller manager deployment
+│   ├── rbac/              # RBAC roles for CRD access
+│   └── samples/           # Example CR manifests
+├── internal/
+│   ├── controller/        # Reconcilers for each CRD
+│   ├── datasource/        # User data resolution
+│   └── provider/          # Provider interface & implementations
+│       └── maxmind/       # MaxMind minFraud provider
+└── test/                  # E2E tests
 ```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v1-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
 
 ## License
 
@@ -132,4 +147,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
