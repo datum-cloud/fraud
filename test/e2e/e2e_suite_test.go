@@ -27,7 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"go.miloapis.com/fraud-operator/test/utils"
+	"go.miloapis.com/fraud/test/utils"
 )
 
 var (

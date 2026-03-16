@@ -25,7 +25,7 @@ import (
 	"net/http"
 	"time"
 
-	"go.miloapis.com/fraud-operator/internal/provider"
+	"go.miloapis.com/fraud/internal/provider"
 )
 
 const (

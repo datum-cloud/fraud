@@ -40,10 +40,10 @@ import (
 	activityv1alpha1 "go.miloapis.com/activity/pkg/apis/activity/v1alpha1"
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 
-	fraudv1alpha1 "go.miloapis.com/fraud-operator/api/v1alpha1"
-	"go.miloapis.com/fraud-operator/internal/controller"
-	"go.miloapis.com/fraud-operator/internal/datasource"
-	"go.miloapis.com/fraud-operator/internal/provider"
+	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
+	"go.miloapis.com/fraud/internal/controller"
+	"go.miloapis.com/fraud/internal/datasource"
+	"go.miloapis.com/fraud/internal/provider"
 	// +kubebuilder:scaffold:imports
 )
 

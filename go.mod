@@ -1,4 +1,4 @@
-module go.miloapis.com/fraud-operator
+module go.miloapis.com/fraud
 
 go 1.25.7
 

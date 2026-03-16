@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	fraudv1alpha1 "go.miloapis.com/fraud-operator/api/v1alpha1"
+	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 )
 
 var _ = Describe("FraudPolicy Controller", func() {

@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	fraudv1alpha1 "go.miloapis.com/fraud-operator/api/v1alpha1"
+	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 )
 
 // FraudPolicyReconciler reconciles a FraudPolicy object.

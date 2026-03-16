@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"go.miloapis.com/fraud-operator/internal/provider"
+	"go.miloapis.com/fraud/internal/provider"
 )
 
 func TestEvaluate_Scores(t *testing.T) {

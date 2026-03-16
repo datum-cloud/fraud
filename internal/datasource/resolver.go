@@ -29,7 +29,7 @@ import (
 	activityv1alpha1 "go.miloapis.com/activity/pkg/apis/activity/v1alpha1"
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 
-	"go.miloapis.com/fraud-operator/internal/provider"
+	"go.miloapis.com/fraud/internal/provider"
 )
 
 // Resolver fetches data from the platform's User CRD and audit log API
