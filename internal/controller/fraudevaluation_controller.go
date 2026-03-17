@@ -67,6 +67,8 @@ type FraudEvaluationReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=users,verbs=get
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=userdeactivations,verbs=get;create;update;patch
+// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessapprovals,verbs=get;create
+// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessrejections,verbs=get;create
 // +kubebuilder:rbac:groups=activity.miloapis.com,resources=auditlogqueries,verbs=create
 
 // Reconcile runs the fraud evaluation pipeline for a FraudEvaluation resource.
@@ -412,10 +414,12 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		return r.setEnforcementAppliedCondition(ctx, eval, "ObserveMode", "Enforcement skipped: policy is in OBSERVE mode")
 	}
 
-	// AUTO mode: create a UserDeactivation for DEACTIVATE decisions.
-	if eval.Status.Decision == fraudv1alpha1.DecisionDeactivate {
+	resourceName := enforcementResourcePrefix + eval.Name
+
+	switch eval.Status.Decision {
+	case fraudv1alpha1.DecisionDeactivate:
 		deactivation := &iamv1alpha1.UserDeactivation{}
-		deactivation.Name = enforcementResourcePrefix + eval.Name
+		deactivation.Name = resourceName
 
 		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deactivation, func() error {
 			deactivation.Spec = iamv1alpha1.UserDeactivationSpec{
@@ -427,10 +431,41 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 			return nil
 		})
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to create UserDeactivation %q: %w", deactivation.Name, err)
+			return ctrl.Result{}, fmt.Errorf("failed to create UserDeactivation %q: %w", resourceName, err)
 		}
 
-		log.Info("UserDeactivation created", "name", deactivation.Name, "user", eval.Spec.UserRef.Name)
+		log.Info("UserDeactivation created", "name", resourceName, "user", eval.Spec.UserRef.Name)
+
+	case fraudv1alpha1.DecisionReview:
+		rejection := &iamv1alpha1.PlatformAccessRejection{
+			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+			Spec: iamv1alpha1.PlatformAccessRejectionSpec{
+				UserRef: iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
+				Reason:  "fraud-review",
+			},
+		}
+
+		if err := r.Create(ctx, rejection); err != nil && !apierrors.IsAlreadyExists(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessRejection %q: %w", resourceName, err)
+		}
+
+		log.Info("PlatformAccessRejection created", "name", resourceName, "user", eval.Spec.UserRef.Name)
+
+	default: // DecisionNone
+		approval := &iamv1alpha1.PlatformAccessApproval{
+			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+			Spec: iamv1alpha1.PlatformAccessApprovalSpec{
+				SubjectRef: iamv1alpha1.SubjectReference{
+					UserRef: &iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
+				},
+			},
+		}
+
+		if err := r.Create(ctx, approval); err != nil && !apierrors.IsAlreadyExists(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessApproval %q: %w", resourceName, err)
+		}
+
+		log.Info("PlatformAccessApproval created", "name", resourceName, "user", eval.Spec.UserRef.Name)
 	}
 
 	return r.setEnforcementAppliedCondition(ctx, eval, "EnforcementApplied", fmt.Sprintf("Enforcement applied for decision %s", eval.Status.Decision))
