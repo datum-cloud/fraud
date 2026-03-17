@@ -3,7 +3,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -57,7 +59,7 @@ var _ = BeforeSuite(func() {
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "config", "crd", "bases"),
-			filepath.Join("..", "..", "testdata", "crds", "iam"),
+			filepath.Join(miloModuleDir(), "config", "crd", "bases", "iam"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}
@@ -83,6 +85,24 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// miloModuleDir returns the on-disk path of the go.miloapis.com/milo module from
+// the Go module cache, so envtest can load the IAM CRDs bundled in that module
+// without copying them into this repository.
+func miloModuleDir() string {
+	out, err := exec.Command("go", "list", "-m", "-json", "go.miloapis.com/milo").Output()
+	if err != nil {
+		panic("failed to locate go.miloapis.com/milo module: " + err.Error())
+	}
+	var info struct{ Dir string }
+	if err := json.Unmarshal(out, &info); err != nil {
+		panic("failed to parse go list output: " + err.Error())
+	}
+	if info.Dir == "" {
+		panic("go.miloapis.com/milo module dir is empty — run 'go mod download' first")
+	}
+	return info.Dir
+}
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
 // ENVTEST-based tests depend on specific binaries, usually located in paths set by
