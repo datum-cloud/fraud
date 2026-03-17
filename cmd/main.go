@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -229,6 +230,20 @@ func main() {
 		Resolver: datasource.NewResolver(mgr.GetClient()),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FraudEvaluation")
+		os.Exit(1)
+	}
+	miloClient, err := client.New(restCfg, client.Options{Scheme: scheme})
+	if err != nil {
+		setupLog.Error(err, "unable to build milo client")
+		os.Exit(1)
+	}
+
+	if err := (&controller.FraudEnforcementReconciler{
+		Client:     mgr.GetClient(),
+		MiloClient: miloClient,
+		Scheme:     mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "FraudEnforcement")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
