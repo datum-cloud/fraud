@@ -14,7 +14,10 @@ const (
 
 // Phase values for FraudEvaluation.status.phase.
 const (
+	PhasePending   = "Pending"
+	PhaseRunning   = "Running"
 	PhaseCompleted = "Completed"
+	PhaseError     = "Error"
 )
 
 // UserReference is a reference to the User being evaluated for fraud.

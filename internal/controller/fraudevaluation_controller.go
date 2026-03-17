@@ -17,7 +17,6 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
@@ -29,8 +28,6 @@ import (
 
 const (
 	defaultMaxHistoryEntries = 50
-
-	actionNone = "NONE"
 
 	// conditionEnforcementApplied is set on a FraudEvaluation once IAM
 	// enforcement resources have been successfully created in the Milo API server.
@@ -44,9 +41,9 @@ const (
 // actionPriority maps decision strings to a numeric priority for comparison.
 // Higher value means higher severity.
 var actionPriority = map[string]int{
-	actionNone:   0,
-	"REVIEW":     1,
-	"DEACTIVATE": 2,
+	fraudv1alpha1.DecisionNone:       0,
+	fraudv1alpha1.DecisionReview:     1,
+	fraudv1alpha1.DecisionDeactivate: 2,
 }
 
 // FraudEvaluationReconciler reconciles a FraudEvaluation object.
@@ -86,7 +83,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// 2. If already errored, do not re-process.
-	if eval.Status.Phase == "Error" {
+	if eval.Status.Phase == fraudv1alpha1.PhaseError {
 		return ctrl.Result{}, nil
 	}
 
@@ -102,7 +99,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// 3. Set phase to Running and update status.
-	eval.Status.Phase = "Running"
+	eval.Status.Phase = fraudv1alpha1.PhaseRunning
 	if err := r.Status().Update(ctx, &eval); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to set phase to Running: %w", err)
 	}
@@ -289,7 +286,7 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// 10. Set phase to Completed and update all status fields.
-	eval.Status.Phase = "Completed"
+	eval.Status.Phase = fraudv1alpha1.PhaseCompleted
 	eval.Status.CompositeScore = compositeScoreStr
 	eval.Status.Decision = decision
 	eval.Status.EnforcementAction = enforcementAction
@@ -314,7 +311,12 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		"enforcementAction", enforcementAction,
 		"stages", len(stageResults))
 
-	// 11. Apply enforcement based on policy mode and decision.
+	// 11. Re-fetch to get the latest resourceVersion before patching status again.
+	if err := r.Get(ctx, req.NamespacedName, &eval); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to re-fetch FraudEvaluation after completion: %w", err)
+	}
+
+	// 12. Apply enforcement based on policy mode and decision.
 	return r.applyEnforcement(ctx, &eval, &policy)
 }
 
@@ -343,10 +345,10 @@ func (r *FraudEvaluationReconciler) evaluateThresholds(thresholds []fraudv1alpha
 // Severity order: DEACTIVATE > REVIEW > NONE.
 func (r *FraudEvaluationReconciler) highestAction(actions []string) string {
 	if len(actions) == 0 {
-		return actionNone
+		return fraudv1alpha1.DecisionNone
 	}
 
-	highest := actionNone
+	highest := fraudv1alpha1.DecisionNone
 
 	for _, a := range actions {
 		if actionPriority[a] > actionPriority[highest] {
@@ -359,18 +361,18 @@ func (r *FraudEvaluationReconciler) highestAction(actions []string) string {
 
 // determineEnforcement maps the decision to an enforcement action based on policy mode.
 func (r *FraudEvaluationReconciler) determineEnforcement(mode, decision string) string {
-	if mode == "OBSERVE" {
+	if mode == fraudv1alpha1.EnforcementModeObserve {
 		return "OBSERVED"
 	}
 
 	// AUTO mode.
 	switch decision {
-	case "DEACTIVATE":
+	case fraudv1alpha1.DecisionDeactivate:
 		return "DEACTIVATED"
-	case "REVIEW":
+	case fraudv1alpha1.DecisionReview:
 		return "REVIEW_FLAGGED"
 	default:
-		return actionNone
+		return fraudv1alpha1.DecisionNone
 	}
 }
 
@@ -380,7 +382,7 @@ func (r *FraudEvaluationReconciler) setErrorPhase(ctx context.Context, eval *fra
 	log := logf.FromContext(ctx)
 	log.Error(fmt.Errorf("%s", message), "evaluation failed")
 
-	eval.Status.Phase = "Error"
+	eval.Status.Phase = fraudv1alpha1.PhaseError
 
 	meta.SetStatusCondition(&eval.Status.Conditions, metav1.Condition{
 		Type:               "Available",
@@ -409,7 +411,7 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 	}
 
 	// OBSERVE mode: log but do not create enforcement resources.
-	if policy.Spec.Enforcement.Mode == "OBSERVE" {
+	if policy.Spec.Enforcement.Mode == fraudv1alpha1.EnforcementModeObserve {
 		log.Info("enforcement skipped (OBSERVE mode)", "decision", eval.Status.Decision)
 		return r.setEnforcementAppliedCondition(ctx, eval, "ObserveMode", "Enforcement skipped: policy is in OBSERVE mode")
 	}
@@ -418,23 +420,21 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 
 	switch eval.Status.Decision {
 	case fraudv1alpha1.DecisionDeactivate:
-		deactivation := &iamv1alpha1.UserDeactivation{}
-		deactivation.Name = resourceName
-
-		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deactivation, func() error {
-			deactivation.Spec = iamv1alpha1.UserDeactivationSpec{
+		deactivation := &iamv1alpha1.UserDeactivation{
+			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+			Spec: iamv1alpha1.UserDeactivationSpec{
 				UserRef:       iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
 				Reason:        "fraud-deactivate",
 				Description:   fmt.Sprintf("Automated deactivation from FraudEvaluation %q (score: %s)", eval.Name, eval.Status.CompositeScore),
 				DeactivatedBy: "fraud-operator",
-			}
-			return nil
-		})
-		if err != nil {
+			},
+		}
+
+		if err := r.Create(ctx, deactivation); err != nil && !apierrors.IsAlreadyExists(err) {
 			return ctrl.Result{}, fmt.Errorf("failed to create UserDeactivation %q: %w", resourceName, err)
 		}
 
-		log.Info("UserDeactivation created", "name", resourceName, "user", eval.Spec.UserRef.Name)
+		log.Info("UserDeactivation ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	case fraudv1alpha1.DecisionReview:
 		rejection := &iamv1alpha1.PlatformAccessRejection{
@@ -449,9 +449,9 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 			return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessRejection %q: %w", resourceName, err)
 		}
 
-		log.Info("PlatformAccessRejection created", "name", resourceName, "user", eval.Spec.UserRef.Name)
+		log.Info("PlatformAccessRejection ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
-	default: // DecisionNone
+	case fraudv1alpha1.DecisionNone:
 		approval := &iamv1alpha1.PlatformAccessApproval{
 			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
 			Spec: iamv1alpha1.PlatformAccessApprovalSpec{
@@ -465,7 +465,10 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 			return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessApproval %q: %w", resourceName, err)
 		}
 
-		log.Info("PlatformAccessApproval created", "name", resourceName, "user", eval.Spec.UserRef.Name)
+		log.Info("PlatformAccessApproval ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
+
+	default:
+		return ctrl.Result{}, fmt.Errorf("unexpected decision %q on FraudEvaluation %q: cannot apply enforcement", eval.Status.Decision, eval.Name)
 	}
 
 	return r.setEnforcementAppliedCondition(ctx, eval, "EnforcementApplied", fmt.Sprintf("Enforcement applied for decision %s", eval.Status.Decision))

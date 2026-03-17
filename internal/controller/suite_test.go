@@ -17,6 +17,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
+
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -46,12 +48,17 @@ var _ = BeforeSuite(func() {
 	var err error
 	err = fraudv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	err = iamv1alpha1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd", "bases"),
+			filepath.Join(miloRepoRoot(), "config", "crd", "bases", "iam"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 
@@ -76,6 +83,13 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
+
+// miloRepoRoot returns the path to the datum-cloud/milo repository, resolved
+// relative to this file's location. This is used to locate IAM CRDs for envtest.
+func miloRepoRoot() string {
+	// From internal/controller, go up to repo root then across to milo.
+	return filepath.Join("..", "..", "..", "milo")
+}
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
 // ENVTEST-based tests depend on specific binaries, usually located in paths set by

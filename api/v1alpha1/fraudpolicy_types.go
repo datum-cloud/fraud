@@ -74,6 +74,12 @@ type Stage struct {
 	ShortCircuit *ShortCircuitConfig `json:"shortCircuit,omitempty"`
 }
 
+// Enforcement mode constants for FraudPolicy.spec.enforcement.mode.
+const (
+	EnforcementModeObserve = "OBSERVE"
+	EnforcementModeAuto    = "AUTO"
+)
+
 // EnforcementConfig controls how fraud evaluation results are acted upon.
 type EnforcementConfig struct {
 	// mode determines whether enforcement actions are automatically applied or
