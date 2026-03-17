@@ -57,7 +57,7 @@ var _ = BeforeSuite(func() {
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "config", "crd", "bases"),
-			filepath.Join(miloRepoRoot(), "config", "crd", "bases", "iam"),
+			filepath.Join("..", "..", "testdata", "crds", "iam"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}
@@ -83,13 +83,6 @@ var _ = AfterSuite(func() {
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })
-
-// miloRepoRoot returns the path to the datum-cloud/milo repository, resolved
-// relative to this file's location. This is used to locate IAM CRDs for envtest.
-func miloRepoRoot() string {
-	// From internal/controller, go up to repo root then across to milo.
-	return filepath.Join("..", "..", "..", "milo")
-}
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
 // ENVTEST-based tests depend on specific binaries, usually located in paths set by

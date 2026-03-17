@@ -132,135 +132,11 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		input = resolved
 	}
 
-	// 6. Execute stages in order.
-	stageResults := make([]fraudv1alpha1.StageResult, 0, len(policy.Spec.Stages))
-
-	var (
-		shortCircuitActive bool
-		allMatchedActions  []string
-		compositeScore     float64
-	)
-
-	for _, stage := range policy.Spec.Stages {
-		sr := fraudv1alpha1.StageResult{
-			Name: stage.Name,
-		}
-
-		// Check short-circuit: skip non-required stages when short-circuit is active.
-		if shortCircuitActive && !stage.Required {
-			sr.Skipped = true
-			stageResults = append(stageResults, sr)
-			log.V(1).Info("skipping stage due to short-circuit", "stage", stage.Name)
-
-			continue
-		}
-
-		var (
-			maxStageScore    float64
-			providerResults  []fraudv1alpha1.ProviderResult
-			providerDegraded bool
-		)
-
-		for _, sp := range stage.Providers {
-			// Look up the FraudProvider CR.
-			var fp fraudv1alpha1.FraudProvider
-			fpKey := types.NamespacedName{Name: sp.ProviderRef.Name}
-
-			if err := r.Get(ctx, fpKey, &fp); err != nil {
-				return r.setErrorPhase(ctx, &eval, fmt.Sprintf("failed to fetch FraudProvider %q: %v", sp.ProviderRef.Name, err))
-			}
-
-			// Get the provider implementation from the registry by CR name.
-			impl, ok := r.Registry.Get(sp.ProviderRef.Name)
-			if !ok {
-				return r.setErrorPhase(ctx, &eval, fmt.Sprintf("provider %q is not yet initialized (Available condition may be false)", sp.ProviderRef.Name))
-			}
-
-			// Call the provider.
-			start := time.Now()
-			result := impl.Evaluate(ctx, input)
-			duration := time.Since(start)
-
-			pr := fraudv1alpha1.ProviderResult{
-				Provider:    sp.ProviderRef.Name,
-				Score:       strconv.FormatFloat(result.Score, 'f', 2, 64),
-				RawResponse: result.RawResponse,
-				Duration:    duration.Round(time.Millisecond).String(),
-			}
-
-			if result.Error != nil {
-				failurePolicy := fp.Spec.FailurePolicy
-				if failurePolicy == "" {
-					failurePolicy = "FailOpen"
-				}
-
-				pr.Error = result.Error.Error()
-				pr.FailurePolicyApplied = failurePolicy
-
-				if failurePolicy == "FailClosed" {
-					// FailClosed: abort the entire evaluation with an error.
-					providerResults = append(providerResults, pr)
-					sr.ProviderResults = providerResults
-					stageResults = append(stageResults, sr)
-					eval.Status.StageResults = stageResults
-
-					return r.setErrorPhase(ctx, &eval,
-						fmt.Sprintf("provider %q failed with FailClosed policy: %v", sp.ProviderRef.Name, result.Error))
-				}
-
-				// FailOpen: record the error, continue with score = 0.
-				pr.Score = "0.00"
-				providerDegraded = true
-
-				log.Info("provider error with FailOpen policy, continuing", "provider", sp.ProviderRef.Name, "error", result.Error)
-			}
-
-			providerResults = append(providerResults, pr)
-
-			if result.Score > maxStageScore {
-				maxStageScore = result.Score
-			}
-		}
-
-		sr.ProviderResults = providerResults
-		stageResults = append(stageResults, sr)
-
-		// Track composite score as the max across all non-skipped stages.
-		if maxStageScore > compositeScore {
-			compositeScore = maxStageScore
-		}
-
-		// Check thresholds: find the highest matching threshold.
-		matchedAction := r.evaluateThresholds(stage.Thresholds, int(maxStageScore))
-		if matchedAction != "" {
-			allMatchedActions = append(allMatchedActions, matchedAction)
-
-			// Record event for threshold crossing.
-			if r.Recorder != nil {
-				r.Recorder.Eventf(&eval, nil, corev1.EventTypeWarning, "ThresholdCrossed", "EvaluateThreshold",
-					"Stage %q: score %.2f triggered %s threshold", stage.Name, maxStageScore, matchedAction)
-			}
-		}
-
-		// Check short-circuit configuration.
-		if stage.ShortCircuit != nil && int(maxStageScore) < stage.ShortCircuit.SkipWhenBelow {
-			shortCircuitActive = true
-			log.V(1).Info("short-circuit activated", "stage", stage.Name, "score", maxStageScore, "skipWhenBelow", stage.ShortCircuit.SkipWhenBelow)
-		}
-
-		// Set degraded condition if any provider had an error.
-		if providerDegraded {
-			meta.SetStatusCondition(&eval.Status.Conditions, metav1.Condition{
-				Type:               "Degraded",
-				Status:             metav1.ConditionTrue,
-				Reason:             "ProviderError",
-				Message:            fmt.Sprintf("One or more providers in stage %q returned errors", stage.Name),
-				ObservedGeneration: eval.Generation,
-			})
-		}
+	// 6. Execute stages and determine decision.
+	stageResults, compositeScore, allMatchedActions, done, doneResult, doneErr := r.runStages(ctx, &eval, &policy, input)
+	if done {
+		return doneResult, doneErr
 	}
-
-	// 6. Composite score is already computed as max across non-skipped stages.
 
 	// 7. Determine decision: highest severity action from all matched thresholds.
 	decision := r.highestAction(allMatchedActions)
@@ -318,6 +194,137 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// 12. Apply enforcement based on policy mode and decision.
 	return r.applyEnforcement(ctx, &eval, &policy)
+}
+
+// runStages executes each pipeline stage in order and returns the accumulated results.
+// If a FailClosed provider error forces early termination, done is true and the caller
+// should immediately return (doneResult, doneErr).
+func (r *FraudEvaluationReconciler) runStages(
+	ctx context.Context,
+	eval *fraudv1alpha1.FraudEvaluation,
+	policy *fraudv1alpha1.FraudPolicy,
+	input provider.Input,
+) (stageResults []fraudv1alpha1.StageResult, compositeScore float64, allMatchedActions []string, done bool, doneResult ctrl.Result, doneErr error) {
+	log := logf.FromContext(ctx)
+	stageResults = make([]fraudv1alpha1.StageResult, 0, len(policy.Spec.Stages))
+
+	var shortCircuitActive bool
+
+	for _, stage := range policy.Spec.Stages {
+		sr := fraudv1alpha1.StageResult{Name: stage.Name}
+
+		if shortCircuitActive && !stage.Required {
+			sr.Skipped = true
+			stageResults = append(stageResults, sr)
+			log.V(1).Info("skipping stage due to short-circuit", "stage", stage.Name)
+
+			continue
+		}
+
+		providerResults, maxStageScore, degraded, failClosedMsg := r.runProviders(ctx, stage, input)
+		if failClosedMsg != "" {
+			sr.ProviderResults = providerResults
+			stageResults = append(stageResults, sr)
+			eval.Status.StageResults = stageResults
+			doneResult, doneErr = r.setErrorPhase(ctx, eval, failClosedMsg)
+
+			return stageResults, 0, nil, true, doneResult, doneErr
+		}
+
+		sr.ProviderResults = providerResults
+		stageResults = append(stageResults, sr)
+
+		if maxStageScore > compositeScore {
+			compositeScore = maxStageScore
+		}
+
+		matchedAction := r.evaluateThresholds(stage.Thresholds, int(maxStageScore))
+		if matchedAction != "" {
+			allMatchedActions = append(allMatchedActions, matchedAction)
+
+			if r.Recorder != nil {
+				r.Recorder.Eventf(eval, nil, corev1.EventTypeWarning, "ThresholdCrossed", "EvaluateThreshold",
+					"Stage %q: score %.2f triggered %s threshold", stage.Name, maxStageScore, matchedAction)
+			}
+		}
+
+		if stage.ShortCircuit != nil && int(maxStageScore) < stage.ShortCircuit.SkipWhenBelow {
+			shortCircuitActive = true
+			log.V(1).Info("short-circuit activated", "stage", stage.Name, "score", maxStageScore, "skipWhenBelow", stage.ShortCircuit.SkipWhenBelow)
+		}
+
+		if degraded {
+			meta.SetStatusCondition(&eval.Status.Conditions, metav1.Condition{
+				Type:               "Degraded",
+				Status:             metav1.ConditionTrue,
+				Reason:             "ProviderError",
+				Message:            fmt.Sprintf("One or more providers in stage %q returned errors", stage.Name),
+				ObservedGeneration: eval.Generation,
+			})
+		}
+	}
+
+	return stageResults, compositeScore, allMatchedActions, false, ctrl.Result{}, nil
+}
+
+// runProviders calls each provider in a stage and returns the results.
+// If a FailClosed provider error occurs, failClosedMsg is non-empty and the caller
+// should abort the evaluation pipeline.
+func (r *FraudEvaluationReconciler) runProviders(
+	ctx context.Context,
+	stage fraudv1alpha1.Stage,
+	input provider.Input,
+) (results []fraudv1alpha1.ProviderResult, maxScore float64, degraded bool, failClosedMsg string) {
+	log := logf.FromContext(ctx)
+
+	for _, sp := range stage.Providers {
+		var fp fraudv1alpha1.FraudProvider
+		if err := r.Get(ctx, types.NamespacedName{Name: sp.ProviderRef.Name}, &fp); err != nil {
+			return results, 0, false, fmt.Sprintf("failed to fetch FraudProvider %q: %v", sp.ProviderRef.Name, err)
+		}
+
+		impl, ok := r.Registry.Get(sp.ProviderRef.Name)
+		if !ok {
+			return results, 0, false, fmt.Sprintf("provider %q is not yet initialized (Available condition may be false)", sp.ProviderRef.Name)
+		}
+
+		start := time.Now()
+		result := impl.Evaluate(ctx, input)
+
+		pr := fraudv1alpha1.ProviderResult{
+			Provider:    sp.ProviderRef.Name,
+			Score:       strconv.FormatFloat(result.Score, 'f', 2, 64),
+			RawResponse: result.RawResponse,
+			Duration:    time.Since(start).Round(time.Millisecond).String(),
+		}
+
+		if result.Error != nil {
+			failurePolicy := fp.Spec.FailurePolicy
+			if failurePolicy == "" {
+				failurePolicy = "FailOpen"
+			}
+
+			pr.Error = result.Error.Error()
+			pr.FailurePolicyApplied = failurePolicy
+
+			if failurePolicy == "FailClosed" {
+				results = append(results, pr)
+				return results, 0, false, fmt.Sprintf("provider %q failed with FailClosed policy: %v", sp.ProviderRef.Name, result.Error)
+			}
+
+			pr.Score = "0.00"
+			degraded = true
+			log.Info("provider error with FailOpen policy, continuing", "provider", sp.ProviderRef.Name, "error", result.Error)
+		}
+
+		results = append(results, pr)
+
+		if result.Score > maxScore {
+			maxScore = result.Score
+		}
+	}
+
+	return results, maxScore, degraded, ""
 }
 
 // evaluateThresholds finds the highest matching threshold action for the given score.
