@@ -5,6 +5,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Decision values for FraudEvaluation.status.decision.
+const (
+	DecisionNone       = "NONE"
+	DecisionReview     = "REVIEW"
+	DecisionDeactivate = "DEACTIVATE"
+)
+
+// Phase values for FraudEvaluation.status.phase.
+const (
+	PhaseCompleted = "Completed"
+)
+
 // UserReference is a reference to the User being evaluated for fraud.
 type UserReference struct {
 	// name is the name of the User resource.

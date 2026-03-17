@@ -17,7 +17,10 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 	"go.miloapis.com/fraud/internal/datasource"
@@ -28,6 +31,14 @@ const (
 	defaultMaxHistoryEntries = 50
 
 	actionNone = "NONE"
+
+	// conditionEnforcementApplied is set on a FraudEvaluation once IAM
+	// enforcement resources have been successfully created in the Milo API server.
+	conditionEnforcementApplied = "EnforcementApplied"
+
+	// enforcementResourcePrefix is prepended to the FraudEvaluation name when
+	// naming IAM enforcement resources.
+	enforcementResourcePrefix = "fraud-"
 )
 
 // actionPriority maps decision strings to a numeric priority for comparison.
@@ -55,6 +66,7 @@ type FraudEvaluationReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=users,verbs=get
+// +kubebuilder:rbac:groups=iam.miloapis.com,resources=userdeactivations,verbs=get;create;update;patch
 // +kubebuilder:rbac:groups=activity.miloapis.com,resources=auditlogqueries,verbs=create
 
 // Reconcile runs the fraud evaluation pipeline for a FraudEvaluation resource.
@@ -71,9 +83,20 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	// 2. If already completed or errored, do not re-process.
-	if eval.Status.Phase == "Completed" || eval.Status.Phase == "Error" {
+	// 2. If already errored, do not re-process.
+	if eval.Status.Phase == "Error" {
 		return ctrl.Result{}, nil
+	}
+
+	// 2a. If evaluation is already completed, skip the pipeline and apply
+	// enforcement (which short-circuits if EnforcementApplied is already set).
+	if eval.Status.Phase == fraudv1alpha1.PhaseCompleted {
+		var policy fraudv1alpha1.FraudPolicy
+		if err := r.Get(ctx, types.NamespacedName{Name: eval.Spec.PolicyRef.Name}, &policy); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to fetch FraudPolicy %q for enforcement: %w", eval.Spec.PolicyRef.Name, err)
+		}
+
+		return r.applyEnforcement(ctx, &eval, &policy)
 	}
 
 	// 3. Set phase to Running and update status.
@@ -289,7 +312,8 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		"enforcementAction", enforcementAction,
 		"stages", len(stageResults))
 
-	return ctrl.Result{}, nil
+	// 11. Apply enforcement based on policy mode and decision.
+	return r.applyEnforcement(ctx, &eval, &policy)
 }
 
 // evaluateThresholds finds the highest matching threshold action for the given score.
@@ -366,6 +390,66 @@ func (r *FraudEvaluationReconciler) setErrorPhase(ctx context.Context, eval *fra
 
 	if err := r.Status().Update(ctx, eval); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to set Error phase: %w", err)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// applyEnforcement creates IAM enforcement resources for a completed evaluation.
+// It is idempotent: if the EnforcementApplied condition is already True, it returns immediately.
+// Enforcement is only applied in AUTO mode; OBSERVE mode skips resource creation.
+func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *fraudv1alpha1.FraudEvaluation, policy *fraudv1alpha1.FraudPolicy) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	// Short-circuit if enforcement has already been applied.
+	if meta.IsStatusConditionTrue(eval.Status.Conditions, conditionEnforcementApplied) {
+		return ctrl.Result{}, nil
+	}
+
+	// OBSERVE mode: log but do not create enforcement resources.
+	if policy.Spec.Enforcement.Mode == "OBSERVE" {
+		log.Info("enforcement skipped (OBSERVE mode)", "decision", eval.Status.Decision)
+		return r.setEnforcementAppliedCondition(ctx, eval, "ObserveMode", "Enforcement skipped: policy is in OBSERVE mode")
+	}
+
+	// AUTO mode: create a UserDeactivation for DEACTIVATE decisions.
+	if eval.Status.Decision == fraudv1alpha1.DecisionDeactivate {
+		deactivation := &iamv1alpha1.UserDeactivation{}
+		deactivation.Name = enforcementResourcePrefix + eval.Name
+
+		_, err := controllerutil.CreateOrUpdate(ctx, r.Client, deactivation, func() error {
+			deactivation.Spec = iamv1alpha1.UserDeactivationSpec{
+				UserRef:       iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
+				Reason:        "fraud-deactivate",
+				Description:   fmt.Sprintf("Automated deactivation from FraudEvaluation %q (score: %s)", eval.Name, eval.Status.CompositeScore),
+				DeactivatedBy: "fraud-operator",
+			}
+			return nil
+		})
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to create UserDeactivation %q: %w", deactivation.Name, err)
+		}
+
+		log.Info("UserDeactivation created", "name", deactivation.Name, "user", eval.Spec.UserRef.Name)
+	}
+
+	return r.setEnforcementAppliedCondition(ctx, eval, "EnforcementApplied", fmt.Sprintf("Enforcement applied for decision %s", eval.Status.Decision))
+}
+
+// setEnforcementAppliedCondition patches the EnforcementApplied condition onto the evaluation status.
+func (r *FraudEvaluationReconciler) setEnforcementAppliedCondition(ctx context.Context, eval *fraudv1alpha1.FraudEvaluation, reason, message string) (ctrl.Result, error) {
+	base := eval.DeepCopy()
+
+	meta.SetStatusCondition(&eval.Status.Conditions, metav1.Condition{
+		Type:               conditionEnforcementApplied,
+		Status:             metav1.ConditionTrue,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: eval.Generation,
+	})
+
+	if err := r.Status().Patch(ctx, eval, client.MergeFrom(base)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to patch EnforcementApplied condition: %w", err)
 	}
 
 	return ctrl.Result{}, nil
