@@ -7,9 +7,15 @@ import (
 
 // Decision values for FraudEvaluation.status.decision.
 const (
-	DecisionNone       = "NONE"
+	DecisionAccepted   = "ACCEPTED"
 	DecisionReview     = "REVIEW"
 	DecisionDeactivate = "DEACTIVATE"
+)
+
+// EnforcementAction values for FraudEvaluation.status.enforcementAction.
+const (
+	EnforcementActionObserved = "OBSERVED"
+	EnforcementActionEnforced = "ENFORCED"
 )
 
 // Phase values for FraudEvaluation.status.phase.
@@ -121,13 +127,13 @@ type FraudEvaluationStatus struct {
 	// decision is the final fraud decision based on the composite score and
 	// policy thresholds.
 	// +optional
-	// +kubebuilder:validation:Enum=NONE;REVIEW;DEACTIVATE
+	// +kubebuilder:validation:Enum=ACCEPTED;REVIEW;DEACTIVATE
 	Decision string `json:"decision,omitempty"`
 
 	// enforcementAction is the action that was actually taken as a result of
 	// this evaluation. In OBSERVE mode, enforcement is logged but not applied.
 	// +optional
-	// +kubebuilder:validation:Enum=NONE;REVIEW_FLAGGED;DEACTIVATED;OBSERVED
+	// +kubebuilder:validation:Enum=OBSERVED;ENFORCED
 	EnforcementAction string `json:"enforcementAction,omitempty"`
 
 	// trigger indicates what initiated this evaluation (e.g. "UserCreated", "Manual").

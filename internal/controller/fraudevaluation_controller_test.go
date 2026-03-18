@@ -142,7 +142,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			}
 		}
 
-		It("should complete with NONE decision for low score", func() {
+		It("should complete with ACCEPTED decision for low score", func() {
 			createResources(15, "FailOpen", "OBSERVE")
 
 			eval := &fraudv1alpha1.FraudEvaluation{
@@ -163,7 +163,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-low"}, eval)).To(Succeed())
 			Expect(eval.Status.Phase).To(Equal("Completed"))
 			Expect(eval.Status.CompositeScore).To(Equal("15.00"))
-			Expect(eval.Status.Decision).To(Equal("NONE"))
+			Expect(eval.Status.Decision).To(Equal("ACCEPTED"))
 			Expect(eval.Status.EnforcementAction).To(Equal("OBSERVED"))
 			Expect(eval.Status.StageResults).To(HaveLen(1))
 			Expect(eval.Status.StageResults[0].ProviderResults).To(HaveLen(1))
@@ -215,7 +215,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-deactivate"}, eval)).To(Succeed())
 			Expect(eval.Status.Phase).To(Equal(fraudv1alpha1.PhaseCompleted))
 			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionDeactivate))
-			Expect(eval.Status.EnforcementAction).To(Equal("DEACTIVATED"))
+			Expect(eval.Status.EnforcementAction).To(Equal("ENFORCED"))
 
 			// Verify the UserDeactivation resource was created.
 			deactivation := &iamv1alpha1.UserDeactivation{}
@@ -313,7 +313,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-failopen"}, eval)).To(Succeed())
 			Expect(eval.Status.Phase).To(Equal("Completed"))
 			Expect(eval.Status.CompositeScore).To(Equal("0.00"))
-			Expect(eval.Status.Decision).To(Equal("NONE"))
+			Expect(eval.Status.Decision).To(Equal("ACCEPTED"))
 			Expect(eval.Status.StageResults[0].ProviderResults[0].Error).To(ContainSubstring("connection refused"))
 			Expect(eval.Status.StageResults[0].ProviderResults[0].FailurePolicyApplied).To(Equal("FailOpen"))
 		})
@@ -588,30 +588,30 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(rejection.Spec.Reason).To(Equal("fraud-review"))
 		})
 
-		It("AUTO mode NONE decision should create PlatformAccessApproval", func() {
+		It("AUTO mode ACCEPTED decision should create PlatformAccessApproval", func() {
 			createResources(15, "FailOpen", "AUTO")
 
 			eval := &fraudv1alpha1.FraudEvaluation{
-				ObjectMeta: metav1.ObjectMeta{Name: "eval-none-auto"},
+				ObjectMeta: metav1.ObjectMeta{Name: "eval-accepted-auto"},
 				Spec: fraudv1alpha1.FraudEvaluationSpec{
-					UserRef:   fraudv1alpha1.UserReference{Name: "user-none"},
+					UserRef:   fraudv1alpha1.UserReference{Name: "user-accepted"},
 					PolicyRef: fraudv1alpha1.PolicyReference{Name: policyName},
 				},
 			}
 			Expect(k8sClient.Create(ctx, eval)).To(Succeed())
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: "eval-none-auto"},
+				NamespacedName: types.NamespacedName{Name: "eval-accepted-auto"},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-none-auto"}, eval)).To(Succeed())
-			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionNone))
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-accepted-auto"}, eval)).To(Succeed())
+			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionAccepted))
 
 			approval := &iamv1alpha1.PlatformAccessApproval{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-none-auto"}, approval)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-accepted-auto"}, approval)).To(Succeed())
 			Expect(approval.Spec.SubjectRef.UserRef).NotTo(BeNil())
-			Expect(approval.Spec.SubjectRef.UserRef.Name).To(Equal("user-none"))
+			Expect(approval.Spec.SubjectRef.UserRef.Name).To(Equal("user-accepted"))
 		})
 
 		It("OBSERVE mode should not create any IAM resources", func() {

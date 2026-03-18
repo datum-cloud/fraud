@@ -41,7 +41,7 @@ const (
 // actionPriority maps decision strings to a numeric priority for comparison.
 // Higher value means higher severity.
 var actionPriority = map[string]int{
-	fraudv1alpha1.DecisionNone:       0,
+	fraudv1alpha1.DecisionAccepted:   0,
 	fraudv1alpha1.DecisionReview:     1,
 	fraudv1alpha1.DecisionDeactivate: 2,
 }
@@ -349,13 +349,13 @@ func (r *FraudEvaluationReconciler) evaluateThresholds(thresholds []fraudv1alpha
 }
 
 // highestAction returns the most severe action from a list of matched actions.
-// Severity order: DEACTIVATE > REVIEW > NONE.
+// Severity order: DEACTIVATE > REVIEW > ACCEPTED.
 func (r *FraudEvaluationReconciler) highestAction(actions []string) string {
 	if len(actions) == 0 {
-		return fraudv1alpha1.DecisionNone
+		return fraudv1alpha1.DecisionAccepted
 	}
 
-	highest := fraudv1alpha1.DecisionNone
+	highest := fraudv1alpha1.DecisionAccepted
 
 	for _, a := range actions {
 		if actionPriority[a] > actionPriority[highest] {
@@ -367,20 +367,11 @@ func (r *FraudEvaluationReconciler) highestAction(actions []string) string {
 }
 
 // determineEnforcement maps the decision to an enforcement action based on policy mode.
-func (r *FraudEvaluationReconciler) determineEnforcement(mode, decision string) string {
+func (r *FraudEvaluationReconciler) determineEnforcement(mode, _ string) string {
 	if mode == fraudv1alpha1.EnforcementModeObserve {
-		return "OBSERVED"
+		return fraudv1alpha1.EnforcementActionObserved
 	}
-
-	// AUTO mode.
-	switch decision {
-	case fraudv1alpha1.DecisionDeactivate:
-		return "DEACTIVATED"
-	case fraudv1alpha1.DecisionReview:
-		return "REVIEW_FLAGGED"
-	default:
-		return fraudv1alpha1.DecisionNone
-	}
+	return fraudv1alpha1.EnforcementActionEnforced
 }
 
 // setErrorPhase sets the evaluation to the Error phase with the given message
@@ -458,7 +449,7 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 
 		log.Info("PlatformAccessRejection ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
-	case fraudv1alpha1.DecisionNone:
+	case fraudv1alpha1.DecisionAccepted:
 		approval := &iamv1alpha1.PlatformAccessApproval{
 			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
 			Spec: iamv1alpha1.PlatformAccessApprovalSpec{
