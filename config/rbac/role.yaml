@@ -71,6 +71,13 @@ rules:
   - iam.miloapis.com
   resources:
   - platformaccessapprovals
+  verbs:
+  - create
+  - get
+  - list
+- apiGroups:
+  - iam.miloapis.com
+  resources:
   - platformaccessrejections
   verbs:
   - create
