@@ -19,6 +19,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
+
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 	"go.miloapis.com/fraud/internal/datasource"
 	"go.miloapis.com/fraud/internal/provider"
@@ -28,6 +30,14 @@ const (
 	defaultMaxHistoryEntries = 50
 
 	actionNone = "NONE"
+
+	// recentUserThreshold is the maximum age of a user for which the
+	// reconciler will retry resolution of incomplete audit data.
+	recentUserThreshold = 2 * time.Minute
+
+	// auditDataRetryDelay is the requeue interval when waiting for
+	// audit log data to become available for a recent user.
+	auditDataRetryDelay = 5 * time.Second
 )
 
 // actionPriority maps decision strings to a numeric priority for comparison.
@@ -77,9 +87,11 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// 3. Set phase to Running and update status.
-	eval.Status.Phase = "Running"
-	if err := r.Status().Update(ctx, &eval); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to set phase to Running: %w", err)
+	if eval.Status.Phase != "Running" {
+		eval.Status.Phase = "Running"
+		if err := r.Status().Update(ctx, &eval); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set phase to Running: %w", err)
+		}
 	}
 
 	// 4. Fetch the referenced FraudPolicy.
@@ -103,11 +115,24 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	var input provider.Input
 	if r.Resolver != nil {
 		resolved, err := r.Resolver.Resolve(ctx, eval.Spec.UserRef.Name)
+		input = resolved
+
 		if err != nil {
+			// Audit data is incomplete. For recent users, requeue to allow
+			// the data to become available before calling providers.
+			var user iamv1alpha1.User
+			if userErr := r.Get(ctx, types.NamespacedName{Name: eval.Spec.UserRef.Name}, &user); userErr == nil {
+				if time.Since(user.CreationTimestamp.Time) < recentUserThreshold {
+					log.Info("audit data incomplete for recent user, will retry",
+						"user", eval.Spec.UserRef.Name,
+						"userAge", time.Since(user.CreationTimestamp.Time).Round(time.Second))
+
+					return ctrl.Result{RequeueAfter: auditDataRetryDelay}, nil
+				}
+			}
+
 			log.V(1).Info("data source resolution had errors, continuing with partial input", "error", err)
 		}
-
-		input = resolved
 	}
 
 	// 6. Execute stages in order.
