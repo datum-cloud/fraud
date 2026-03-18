@@ -36,6 +36,14 @@ const (
 	// enforcementResourcePrefix is prepended to the FraudEvaluation name when
 	// naming IAM enforcement resources.
 	enforcementResourcePrefix = "fraud-"
+
+	// recentUserThreshold is the maximum age of a user for which the
+	// reconciler will retry resolution of incomplete audit data.
+	recentUserThreshold = 2 * time.Minute
+
+	// auditDataRetryDelay is the requeue interval when waiting for
+	// audit log data to become available for a recent user.
+	auditDataRetryDelay = 5 * time.Second
 )
 
 // actionPriority maps decision strings to a numeric priority for comparison.
@@ -99,9 +107,11 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// 3. Set phase to Running and update status.
-	eval.Status.Phase = fraudv1alpha1.PhaseRunning
-	if err := r.Status().Update(ctx, &eval); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to set phase to Running: %w", err)
+	if eval.Status.Phase != fraudv1alpha1.PhaseRunning {
+		eval.Status.Phase = fraudv1alpha1.PhaseRunning
+		if err := r.Status().Update(ctx, &eval); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set phase to Running: %w", err)
+		}
 	}
 
 	// 4. Fetch the referenced FraudPolicy.
@@ -122,14 +132,9 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// 5. Resolve provider input from platform data sources.
-	var input provider.Input
-	if r.Resolver != nil {
-		resolved, err := r.Resolver.Resolve(ctx, eval.Spec.UserRef.Name)
-		if err != nil {
-			log.V(1).Info("data source resolution had errors, continuing with partial input", "error", err)
-		}
-
-		input = resolved
+	input, retry := r.resolveInput(ctx, &eval)
+	if retry != nil {
+		return *retry, nil
 	}
 
 	// 6. Execute stages and determine decision.
@@ -325,6 +330,42 @@ func (r *FraudEvaluationReconciler) runProviders(
 	}
 
 	return results, maxScore, degraded, ""
+}
+
+// resolveInput resolves the provider input from platform data sources. If audit
+// data is missing and the user was created recently, it returns a requeue result
+// so the reconciler can retry. Otherwise it returns the (possibly partial) input.
+func (r *FraudEvaluationReconciler) resolveInput(
+	ctx context.Context,
+	eval *fraudv1alpha1.FraudEvaluation,
+) (provider.Input, *ctrl.Result) {
+	log := logf.FromContext(ctx)
+
+	if r.Resolver == nil {
+		return provider.Input{}, nil
+	}
+
+	input, err := r.Resolver.Resolve(ctx, eval.Spec.UserRef.Name)
+	if err == nil {
+		return input, nil
+	}
+
+	// Audit data is incomplete. For recent users, requeue to allow the
+	// data to become available before calling providers.
+	var user iamv1alpha1.User
+	if userErr := r.Get(ctx, types.NamespacedName{Name: eval.Spec.UserRef.Name}, &user); userErr == nil {
+		if time.Since(user.CreationTimestamp.Time) < recentUserThreshold {
+			log.Info("audit data incomplete for recent user, will retry",
+				"user", eval.Spec.UserRef.Name,
+				"userAge", time.Since(user.CreationTimestamp.Time).Round(time.Second))
+
+			return input, &ctrl.Result{RequeueAfter: auditDataRetryDelay}
+		}
+	}
+
+	log.V(1).Info("data source resolution had errors, continuing with partial input", "error", err)
+
+	return input, nil
 }
 
 // evaluateThresholds finds the highest matching threshold action for the given score.

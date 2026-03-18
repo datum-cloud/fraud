@@ -45,8 +45,10 @@ func (r *Resolver) Resolve(ctx context.Context, userName string) (provider.Input
 	}
 
 	// Fetch the most recent audit log entry for the user.
+	var auditErr error
 	if err := r.resolveAuditLog(ctx, userName, &input); err != nil {
 		log.Info("failed to resolve audit log data, continuing with empty audit fields", "user", userName, "error", err)
+		auditErr = err
 	}
 
 	log.Info("resolved provider input",
@@ -57,7 +59,7 @@ func (r *Resolver) Resolve(ctx context.Context, userName string) (provider.Input
 		"userAgent", input.UserAgent,
 	)
 
-	return input, nil
+	return input, auditErr
 }
 
 // resolveUser fetches the User CR and populates email and name fields.

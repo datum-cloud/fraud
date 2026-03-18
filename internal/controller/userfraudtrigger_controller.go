@@ -4,7 +4,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,18 +17,6 @@ import (
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
-)
-
-const (
-	// recentUserThreshold is the age threshold below which a user is
-	// considered recently created. For recent users the controller adds a
-	// short delay before creating the evaluation so that audit log data has
-	// time to propagate.
-	recentUserThreshold = 2 * time.Minute
-
-	// recentUserDelay is the requeue delay for recently created users to
-	// allow audit log data to become available before evaluation starts.
-	recentUserDelay = 30 * time.Second
 )
 
 // UserFraudTriggerReconciler watches User resources and automatically creates
@@ -84,16 +71,7 @@ func (r *UserFraudTriggerReconciler) Reconcile(
 		return ctrl.Result{}, nil
 	}
 
-	// 4. For recently created users, delay to allow audit log data to
-	//    propagate before the evaluation pipeline runs.
-	if userAge := time.Since(user.CreationTimestamp.Time); userAge < recentUserThreshold {
-		log.V(1).Info("user is recent, delaying evaluation creation",
-			"user", user.Name, "age", userAge.Round(time.Second))
-
-		return ctrl.Result{RequeueAfter: recentUserDelay}, nil
-	}
-
-	// 5. Create the FraudEvaluation.
+	// 4. Create the FraudEvaluation.
 	eval := &fraudv1alpha1.FraudEvaluation{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "eval-",
