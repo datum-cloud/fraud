@@ -70,6 +70,23 @@ rules:
 - apiGroups:
   - iam.miloapis.com
   resources:
+  - platformaccessapprovals
+  - platformaccessrejections
+  verbs:
+  - create
+  - get
+- apiGroups:
+  - iam.miloapis.com
+  resources:
+  - userdeactivations
+  verbs:
+  - create
+  - get
+  - patch
+  - update
+- apiGroups:
+  - iam.miloapis.com
+  resources:
   - users
   verbs:
   - get

@@ -163,7 +163,7 @@ spec:
                   decision is the final fraud decision based on the composite score and
                   policy thresholds.
                 enum:
-                - NONE
+                - ACCEPTED
                 - REVIEW
                 - DEACTIVATE
                 type: string
@@ -172,10 +172,8 @@ spec:
                   enforcementAction is the action that was actually taken as a result of
                   this evaluation. In OBSERVE mode, enforcement is logged but not applied.
                 enum:
-                - NONE
-                - REVIEW_FLAGGED
-                - DEACTIVATED
                 - OBSERVED
+                - ENFORCED
                 type: string
               history:
                 description: |-
