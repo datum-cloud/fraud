@@ -249,7 +249,7 @@ func (r *FraudEvaluationReconciler) executeStages(
 		)
 
 		for _, sp := range stage.Providers {
-			pr, score, err := r.evaluateProvider(ctx, eval, sp, input)
+			pr, score, err := r.evaluateProvider(ctx, sp, input)
 			if err != nil {
 				providerResults = append(providerResults, pr)
 				sr.ProviderResults = providerResults
@@ -312,7 +312,6 @@ func (r *FraudEvaluationReconciler) executeStages(
 // error string but the returned error is nil.
 func (r *FraudEvaluationReconciler) evaluateProvider(
 	ctx context.Context,
-	eval *fraudv1alpha1.FraudEvaluation,
 	sp fraudv1alpha1.StageProvider,
 	input provider.Input,
 ) (fraudv1alpha1.ProviderResult, float64, error) {
