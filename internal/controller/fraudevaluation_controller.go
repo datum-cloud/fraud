@@ -544,6 +544,19 @@ func (r *FraudEvaluationReconciler) setEnforcementAppliedCondition(ctx context.C
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *FraudEvaluationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &iamv1alpha1.PlatformAccessApproval{}, "spec.subjectRef.userRef.name", func(obj client.Object) []string {
+		paa, ok := obj.(*iamv1alpha1.PlatformAccessApproval)
+		if !ok {
+			return nil
+		}
+		if paa.Spec.SubjectRef.UserRef == nil {
+			return nil
+		}
+		return []string{paa.Spec.SubjectRef.UserRef.Name}
+	}); err != nil {
+		return fmt.Errorf("failed to set field index on PlatformAccessApproval: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fraudv1alpha1.FraudEvaluation{}).
 		Named("fraudevaluation").
