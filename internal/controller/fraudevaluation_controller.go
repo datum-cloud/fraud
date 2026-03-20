@@ -491,16 +491,6 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		log.Info("PlatformAccessRejection ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	case fraudv1alpha1.DecisionAccepted:
-		var approvalList iamv1alpha1.PlatformAccessApprovalList
-		if err := r.List(ctx, &approvalList, client.MatchingFields{"spec.subjectRef.userRef.name": eval.Spec.UserRef.Name}); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessApprovals for user %q: %w", eval.Spec.UserRef.Name, err)
-		}
-
-		if len(approvalList.Items) > 0 {
-			log.Info("PlatformAccessApproval already exists for user, skipping creation", "user", eval.Spec.UserRef.Name)
-			break
-		}
-
 		approval := &iamv1alpha1.PlatformAccessApproval{
 			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
 			Spec: iamv1alpha1.PlatformAccessApprovalSpec{
@@ -517,7 +507,9 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		log.Info("PlatformAccessApproval ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	default:
-		return ctrl.Result{}, fmt.Errorf("unexpected decision %q on FraudEvaluation %q: cannot apply enforcement", eval.Status.Decision, eval.Name)
+		// Unknown or legacy decision value — log and skip enforcement rather than error-looping.
+		log.Info("skipping enforcement for unrecognised decision", "decision", eval.Status.Decision)
+		return r.setEnforcementAppliedCondition(ctx, eval, "SkippedUnknownDecision", fmt.Sprintf("Enforcement skipped: unrecognised decision %q", eval.Status.Decision))
 	}
 
 	return r.setEnforcementAppliedCondition(ctx, eval, "EnforcementApplied", fmt.Sprintf("Enforcement applied for decision %s", eval.Status.Decision))
