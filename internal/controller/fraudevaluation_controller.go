@@ -23,6 +23,7 @@ import (
 
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 	"go.miloapis.com/fraud/internal/datasource"
+	fraudmetrics "go.miloapis.com/fraud/internal/metrics"
 	"go.miloapis.com/fraud/internal/provider"
 )
 
@@ -311,6 +312,7 @@ func (r *FraudEvaluationReconciler) runProviders(
 
 			pr.Error = result.Error.Error()
 			pr.FailurePolicyApplied = failurePolicy
+			fraudmetrics.ProviderCallsTotal.WithLabelValues(sp.ProviderRef.Name, "failure").Inc()
 
 			if failurePolicy == "FailClosed" {
 				results = append(results, pr)
@@ -320,6 +322,8 @@ func (r *FraudEvaluationReconciler) runProviders(
 			pr.Score = "0.00"
 			degraded = true
 			log.Info("provider error with FailOpen policy, continuing", "provider", sp.ProviderRef.Name, "error", result.Error)
+		} else {
+			fraudmetrics.ProviderCallsTotal.WithLabelValues(sp.ProviderRef.Name, "success").Inc()
 		}
 
 		results = append(results, pr)
