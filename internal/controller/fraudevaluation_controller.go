@@ -536,6 +536,17 @@ func (r *FraudEvaluationReconciler) setEnforcementAppliedCondition(ctx context.C
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *FraudEvaluationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&fraudv1alpha1.FraudEvaluation{},
+		"spec.userRef.name",
+		func(obj client.Object) []string {
+			eval := obj.(*fraudv1alpha1.FraudEvaluation)
+			return []string{eval.Spec.UserRef.Name}
+		},
+	); err != nil {
+		return err
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fraudv1alpha1.FraudEvaluation{}).
 		Named("fraudevaluation").
