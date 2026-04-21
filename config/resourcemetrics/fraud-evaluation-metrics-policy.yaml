@@ -1,0 +1,50 @@
+apiVersion: resourcemetrics.miloapis.com/v1alpha1
+kind: ResourceMetricsPolicy
+metadata:
+  name: fraud-evaluations
+spec:
+  generators:
+    - name: fraud-evaluation-info
+      resource:
+        group: fraud.miloapis.com
+        version: v1alpha1
+        resource: fraudevaluations
+      families:
+        - name: fraud_evaluation_info
+          help: "Metadata and current state of each FraudEvaluation. Value is always 1 — use labels to filter."
+          type: gauge
+          metrics:
+            - labels:
+                - name: name
+                  value: "object.metadata.name"
+                - name: user_ref
+                  value: "object.spec.userRef.name"
+                - name: phase
+                  value: "has(object.status.phase) ? object.status.phase : 'Unknown'"
+                - name: decision
+                  value: "has(object.status.decision) ? object.status.decision : ''"
+                - name: enforcement_action
+                  value: "has(object.status.enforcementAction) ? object.status.enforcementAction : ''"
+
+    - name: fraud-evaluation-conditions
+      resource:
+        group: fraud.miloapis.com
+        version: v1alpha1
+        resource: fraudevaluations
+      families:
+        - name: fraud_evaluation_status_condition
+          help: "Status condition state per FraudEvaluation. Value is 1 when the condition status is True, 0 otherwise."
+          type: gauge
+          metrics:
+            - value: "object.status.conditions.exists(c, c.type == 'Available' && c.status == 'True') ? 1.0 : 0.0"
+              labels:
+                - name: name
+                  value: "object.metadata.name"
+                - name: condition
+                  value: "'Available'"
+            - value: "object.status.conditions.exists(c, c.type == 'Degraded' && c.status == 'True') ? 1.0 : 0.0"
+              labels:
+                - name: name
+                  value: "object.metadata.name"
+                - name: condition
+                  value: "'Degraded'"
