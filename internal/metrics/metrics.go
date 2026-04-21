@@ -6,14 +6,17 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
-var ProviderCallsTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "fraud_provider_calls_total",
-		Help: "Total number of fraud provider calls, partitioned by provider name and result.",
+// ProviderCallDuration tracks the duration of fraud provider API calls.
+// The _count suffix gives call totals; use result="failure" to compute error rate.
+var ProviderCallDuration = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "fraud_provider_call_duration_seconds",
+		Help:    "Duration of fraud provider API calls in seconds, partitioned by provider and result.",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 	},
 	[]string{"provider", "result"},
 )
 
 func init() {
-	ctrlmetrics.Registry.MustRegister(ProviderCallsTotal)
+	ctrlmetrics.Registry.MustRegister(ProviderCallDuration)
 }
