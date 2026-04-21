@@ -167,6 +167,7 @@ type FraudEvaluationStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:selectablefield:JSONPath=`.spec.userRef.name`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`,description="Current evaluation phase"
 // +kubebuilder:printcolumn:name="Score",type=string,JSONPath=`.status.compositeScore`,description="Composite fraud score (0-100)"
 // +kubebuilder:printcolumn:name="Decision",type=string,JSONPath=`.status.decision`,description="Final fraud decision"
