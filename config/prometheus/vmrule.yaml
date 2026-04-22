@@ -1,5 +1,5 @@
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
 metadata:
   name: fraud-alerts
   namespace: system
@@ -9,6 +9,7 @@ metadata:
 spec:
   groups:
     - name: fraud-operator
+      interval: 30s
       rules:
         - alert: FraudOperatorDown
           expr: |
@@ -32,7 +33,7 @@ spec:
             severity: critical
           annotations:
             summary: "High error rate for fraud provider {{ $labels.provider }}"
-            description: "{{ $value | humanizePercentage }} of calls to provider {{ $labels.provider }} are failing. With FailClosed policy, fraud evaluations will be blocked until this is resolved."
+            description: "{{ $value | humanizePercentage }} of calls to provider {{ $labels.provider }} are failing. With FailClosed policy, evaluations will be blocked until this is resolved."
 
         - alert: FraudProviderHighLatency
           expr: |
@@ -46,8 +47,6 @@ spec:
             summary: "High latency for fraud provider {{ $labels.provider }}"
             description: "P99 latency for provider {{ $labels.provider }} is {{ $value }}s, exceeding the 5s threshold."
 
-    - name: fraud-evaluations
-      rules:
         - alert: FraudEvaluationHighReconcileErrors
           expr: |
             (
@@ -62,6 +61,9 @@ spec:
             summary: "High reconciliation error rate for fraud evaluations"
             description: "{{ $value | humanizePercentage }} of fraud evaluation reconciliations are failing."
 
+    - name: fraud-evaluations
+      interval: 30s
+      rules:
         - alert: FraudEvaluationsStuckInError
           expr: |
             count(fraud_evaluation_info{phase="Error"}) > 0
