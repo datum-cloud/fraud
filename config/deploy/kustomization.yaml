@@ -10,7 +10,6 @@ resources:
 
 components:
   - ../prometheus
-  - ../resourcemetrics
 
 patches:
   - path: manager_metrics_patch.yaml
