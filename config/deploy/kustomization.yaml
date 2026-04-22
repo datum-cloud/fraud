@@ -5,7 +5,6 @@ namespace: fraud-system
 namePrefix: fraud-
 
 resources:
-  - ../rbac
   - ../manager
   - ../default/metrics_service.yaml
 
