@@ -23,6 +23,7 @@ import (
 
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 	"go.miloapis.com/fraud/internal/datasource"
+	fraudmetrics "go.miloapis.com/fraud/internal/metrics"
 	"go.miloapis.com/fraud/internal/provider"
 )
 
@@ -295,12 +296,13 @@ func (r *FraudEvaluationReconciler) runProviders(
 
 		start := time.Now()
 		result := impl.Evaluate(ctx, input)
+		elapsed := time.Since(start)
 
 		pr := fraudv1alpha1.ProviderResult{
 			Provider:    sp.ProviderRef.Name,
 			Score:       strconv.FormatFloat(result.Score, 'f', 2, 64),
 			RawResponse: result.RawResponse,
-			Duration:    time.Since(start).Round(time.Millisecond).String(),
+			Duration:    elapsed.Round(time.Millisecond).String(),
 		}
 
 		if result.Error != nil {
@@ -311,6 +313,7 @@ func (r *FraudEvaluationReconciler) runProviders(
 
 			pr.Error = result.Error.Error()
 			pr.FailurePolicyApplied = failurePolicy
+			fraudmetrics.ProviderCallDuration.WithLabelValues(sp.ProviderRef.Name, "failure").Observe(elapsed.Seconds())
 
 			if failurePolicy == "FailClosed" {
 				results = append(results, pr)
@@ -320,6 +323,8 @@ func (r *FraudEvaluationReconciler) runProviders(
 			pr.Score = "0.00"
 			degraded = true
 			log.Info("provider error with FailOpen policy, continuing", "provider", sp.ProviderRef.Name, "error", result.Error)
+		} else {
+			fraudmetrics.ProviderCallDuration.WithLabelValues(sp.ProviderRef.Name, "success").Observe(elapsed.Seconds())
 		}
 
 		results = append(results, pr)
