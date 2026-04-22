@@ -6,13 +6,13 @@ namePrefix: fraud-
 
 resources:
   - ../manager
-  - ../default/metrics_service.yaml
+  - metrics_service.yaml
 
 components:
   - ../prometheus
   - ../resourcemetrics
 
 patches:
-  - path: ../default/manager_metrics_patch.yaml
+  - path: manager_metrics_patch.yaml
     target:
       kind: Deployment
