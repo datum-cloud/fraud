@@ -1,7 +1,7 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: fraud-alerts
+  name: alerts
   namespace: system
   labels:
     app.kubernetes.io/name: fraud

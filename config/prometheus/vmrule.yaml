@@ -1,7 +1,7 @@
 apiVersion: operator.victoriametrics.com/v1beta1
 kind: VMRule
 metadata:
-  name: fraud-alerts
+  name: alerts
   namespace: system
   labels:
     app.kubernetes.io/name: fraud
