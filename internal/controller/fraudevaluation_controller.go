@@ -504,8 +504,11 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		log.Info("PlatformAccessRejection ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	case fraudv1alpha1.DecisionAccepted:
-		var existing iamv1alpha1.PlatformAccessApproval
-		if err := r.Get(ctx, types.NamespacedName{Name: resourceName}, &existing); apierrors.IsNotFound(err) {
+		var paas iamv1alpha1.PlatformAccessApprovalList
+		if err := r.List(ctx, &paas, client.MatchingFields{"spec.subjectRef.userRef.name": eval.Spec.UserRef.Name}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessApprovals for user %q: %w", eval.Spec.UserRef.Name, err)
+		}
+		if len(paas.Items) == 0 {
 			approval := &iamv1alpha1.PlatformAccessApproval{
 				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
 				Spec: iamv1alpha1.PlatformAccessApprovalSpec{
@@ -517,8 +520,6 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 			if err := r.Create(ctx, approval); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessApproval %q: %w", resourceName, err)
 			}
-		} else if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get PlatformAccessApproval %q: %w", resourceName, err)
 		}
 
 		log.Info("PlatformAccessApproval ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
