@@ -670,6 +670,76 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(deactivationList.Items).To(HaveLen(1))
 		})
 
+		It("should not create a duplicate PlatformAccessApproval on re-reconcile", func() {
+			createResources(15, "FailOpen", "AUTO")
+
+			eval := &fraudv1alpha1.FraudEvaluation{
+				ObjectMeta: metav1.ObjectMeta{Name: "eval-paa-idem"},
+				Spec: fraudv1alpha1.FraudEvaluationSpec{
+					UserRef:   fraudv1alpha1.UserReference{Name: "user-paa-idem"},
+					PolicyRef: fraudv1alpha1.PolicyReference{Name: policyName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, eval)).To(Succeed())
+
+			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "eval-paa-idem"}}
+
+			_, err := reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second reconcile: EnforcementApplied short-circuits; no second create attempted.
+			_, err = reconciler.Reconcile(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+
+			paaList := &iamv1alpha1.PlatformAccessApprovalList{}
+			Expect(k8sClient.List(ctx, paaList)).To(Succeed())
+			Expect(paaList.Items).To(HaveLen(1))
+		})
+
+		It("should skip PAA creation if user already has an approval from a prior evaluation", func() {
+			createResources(15, "FailOpen", "AUTO")
+
+			// Pre-create a PAA for the user under a different name (simulating a prior evaluation).
+			prior := &iamv1alpha1.PlatformAccessApproval{
+				ObjectMeta: metav1.ObjectMeta{Name: "prior-eval-approval"},
+				Spec: iamv1alpha1.PlatformAccessApprovalSpec{
+					SubjectRef: iamv1alpha1.SubjectReference{
+						UserRef: &iamv1alpha1.UserReference{Name: "user-preapproved"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, prior)).To(Succeed())
+
+			eval := &fraudv1alpha1.FraudEvaluation{
+				ObjectMeta: metav1.ObjectMeta{Name: "eval-preapproved"},
+				Spec: fraudv1alpha1.FraudEvaluationSpec{
+					UserRef:   fraudv1alpha1.UserReference{Name: "user-preapproved"},
+					PolicyRef: fraudv1alpha1.PolicyReference{Name: policyName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, eval)).To(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "eval-preapproved"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-preapproved"}, eval)).To(Succeed())
+			Expect(eval.Status.Phase).To(Equal(fraudv1alpha1.PhaseCompleted))
+			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionAccepted))
+
+			// Only the pre-existing PAA should be present — no new one created.
+			paaList := &iamv1alpha1.PlatformAccessApprovalList{}
+			Expect(k8sClient.List(ctx, paaList)).To(Succeed())
+			Expect(paaList.Items).To(HaveLen(1))
+			Expect(paaList.Items[0].Name).To(Equal("prior-eval-approval"))
+
+			// EnforcementApplied condition should still be set.
+			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		})
+
 		It("should set Error phase when provider is not registered", func() {
 			// Create resources but do NOT register anything in the registry.
 			fp := &fraudv1alpha1.FraudProvider{

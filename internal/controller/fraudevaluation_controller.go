@@ -464,49 +464,62 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 
 	switch eval.Status.Decision {
 	case fraudv1alpha1.DecisionDeactivate:
-		deactivation := &iamv1alpha1.UserDeactivation{
-			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
-			Spec: iamv1alpha1.UserDeactivationSpec{
-				UserRef:       iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
-				Reason:        "fraud-deactivate",
-				Description:   fmt.Sprintf("Automated deactivation from FraudEvaluation %q (score: %s)", eval.Name, eval.Status.CompositeScore),
-				DeactivatedBy: "fraud-operator",
-			},
-		}
-
-		if err := r.Create(ctx, deactivation); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, fmt.Errorf("failed to create UserDeactivation %q: %w", resourceName, err)
+		var existing iamv1alpha1.UserDeactivation
+		if err := r.Get(ctx, types.NamespacedName{Name: resourceName}, &existing); apierrors.IsNotFound(err) {
+			deactivation := &iamv1alpha1.UserDeactivation{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+				Spec: iamv1alpha1.UserDeactivationSpec{
+					UserRef:       iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
+					Reason:        "fraud-deactivate",
+					Description:   fmt.Sprintf("Automated deactivation from FraudEvaluation %q (score: %s)", eval.Name, eval.Status.CompositeScore),
+					DeactivatedBy: "fraud-operator",
+				},
+			}
+			if err := r.Create(ctx, deactivation); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to create UserDeactivation %q: %w", resourceName, err)
+			}
+		} else if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to get UserDeactivation %q: %w", resourceName, err)
 		}
 
 		log.Info("UserDeactivation ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	case fraudv1alpha1.DecisionReview:
-		rejection := &iamv1alpha1.PlatformAccessRejection{
-			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
-			Spec: iamv1alpha1.PlatformAccessRejectionSpec{
-				UserRef: iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
-				Reason:  "fraud-review",
-			},
-		}
-
-		if err := r.Create(ctx, rejection); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessRejection %q: %w", resourceName, err)
+		var existing iamv1alpha1.PlatformAccessRejection
+		if err := r.Get(ctx, types.NamespacedName{Name: resourceName}, &existing); apierrors.IsNotFound(err) {
+			rejection := &iamv1alpha1.PlatformAccessRejection{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+				Spec: iamv1alpha1.PlatformAccessRejectionSpec{
+					UserRef: iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
+					Reason:  "fraud-review",
+				},
+			}
+			if err := r.Create(ctx, rejection); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessRejection %q: %w", resourceName, err)
+			}
+		} else if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to get PlatformAccessRejection %q: %w", resourceName, err)
 		}
 
 		log.Info("PlatformAccessRejection ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	case fraudv1alpha1.DecisionAccepted:
-		approval := &iamv1alpha1.PlatformAccessApproval{
-			ObjectMeta: metav1.ObjectMeta{Name: resourceName},
-			Spec: iamv1alpha1.PlatformAccessApprovalSpec{
-				SubjectRef: iamv1alpha1.SubjectReference{
-					UserRef: &iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
-				},
-			},
+		var paas iamv1alpha1.PlatformAccessApprovalList
+		if err := r.List(ctx, &paas, client.MatchingFields{"spec.subjectRef.userRef.name": eval.Spec.UserRef.Name}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessApprovals for user %q: %w", eval.Spec.UserRef.Name, err)
 		}
-
-		if err := r.Create(ctx, approval); err != nil && !apierrors.IsAlreadyExists(err) {
-			return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessApproval %q: %w", resourceName, err)
+		if len(paas.Items) == 0 {
+			approval := &iamv1alpha1.PlatformAccessApproval{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+				Spec: iamv1alpha1.PlatformAccessApprovalSpec{
+					SubjectRef: iamv1alpha1.SubjectReference{
+						UserRef: &iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
+					},
+				},
+			}
+			if err := r.Create(ctx, approval); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessApproval %q: %w", resourceName, err)
+			}
 		}
 
 		log.Info("PlatformAccessApproval ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
