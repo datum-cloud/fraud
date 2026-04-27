@@ -74,8 +74,8 @@ type FraudEvaluationReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=users,verbs=get
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=userdeactivations,verbs=get;create;update;patch
-// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessapprovals,verbs=get;list;create
-// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessrejections,verbs=get;create
+// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessapprovals,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessrejections,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=activity.miloapis.com,resources=auditlogqueries,verbs=create
 
 // Reconcile runs the fraud evaluation pipeline for a FraudEvaluation resource.
