@@ -7,6 +7,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
@@ -17,16 +18,6 @@ import (
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 	"go.miloapis.com/fraud/internal/provider"
 )
-
-// findCondition returns the condition with the given type, or nil if not found.
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == condType {
-			return &conditions[i]
-		}
-	}
-	return nil
-}
 
 // mockProvider is a test implementation of provider.Provider.
 type mockProvider struct {
@@ -588,7 +579,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(parList.Items).To(BeEmpty())
 
 			// EnforcementApplied condition should reflect the deferral.
-			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("ReviewRequired"))
@@ -644,7 +635,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 
 			// EnforcementApplied condition should still be set with ObserveMode reason.
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-observe-noiam"}, eval)).To(Succeed())
-			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal("ObserveMode"))
 		})
@@ -741,7 +732,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(paaList.Items[0].Name).To(Equal("prior-eval-approval"))
 
 			// EnforcementApplied condition should still be set.
-			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 		})
@@ -785,7 +776,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(paaList.Items).To(BeEmpty())
 
 			// EnforcementApplied condition should be set with RejectionExists reason.
-			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal("RejectionExists"))
