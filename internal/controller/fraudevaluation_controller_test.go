@@ -562,7 +562,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(eval.Status.History).To(HaveLen(1))
 		})
 
-		It("AUTO mode REVIEW decision should create PlatformAccessRejection", func() {
+		It("AUTO mode REVIEW decision should defer enforcement, not create a PlatformAccessRejection", func() {
 			createResources(75, "FailOpen", "AUTO")
 
 			eval := &fraudv1alpha1.FraudEvaluation{
@@ -582,10 +582,16 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-review-auto"}, eval)).To(Succeed())
 			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionReview))
 
-			rejection := &iamv1alpha1.PlatformAccessRejection{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-review-auto"}, rejection)).To(Succeed())
-			Expect(rejection.Spec.UserRef.Name).To(Equal("user-review"))
-			Expect(rejection.Spec.Reason).To(Equal("fraud-review"))
+			// No PAR should be created — REVIEW now defers to human review.
+			parList := &iamv1alpha1.PlatformAccessRejectionList{}
+			Expect(k8sClient.List(ctx, parList)).To(Succeed())
+			Expect(parList.Items).To(BeEmpty())
+
+			// EnforcementApplied condition should reflect the deferral.
+			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal("ReviewRequired"))
 		})
 
 		It("AUTO mode ACCEPTED decision should create PlatformAccessApproval", func() {

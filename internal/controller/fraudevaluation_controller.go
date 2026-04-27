@@ -486,23 +486,15 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		log.Info("UserDeactivation ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	case fraudv1alpha1.DecisionReview:
-		var existing iamv1alpha1.PlatformAccessRejection
-		if err := r.Get(ctx, types.NamespacedName{Name: resourceName}, &existing); apierrors.IsNotFound(err) {
-			rejection := &iamv1alpha1.PlatformAccessRejection{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
-				Spec: iamv1alpha1.PlatformAccessRejectionSpec{
-					UserRef: iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
-					Reason:  "fraud-review",
-				},
-			}
-			if err := r.Create(ctx, rejection); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessRejection %q: %w", resourceName, err)
-			}
-		} else if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get PlatformAccessRejection %q: %w", resourceName, err)
-		}
-
-		log.Info("PlatformAccessRejection ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
+		// REVIEW means the evaluation needs human attention — it does not
+		// automatically translate to a denial. Surface the state via the
+		// EnforcementApplied condition and leave any IAM action to an admin.
+		log.Info("review decision requires manual action; no IAM resource created",
+			"user", eval.Spec.UserRef.Name)
+		return r.setEnforcementAppliedCondition(
+			ctx, eval, "ReviewRequired",
+			fmt.Sprintf("Enforcement deferred: evaluation requires manual review for user %q", eval.Spec.UserRef.Name),
+		)
 
 	case fraudv1alpha1.DecisionAccepted:
 		// The IAM admission webhook denies PlatformAccessApproval creation if a
