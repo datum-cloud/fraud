@@ -565,6 +565,30 @@ func (r *FraudEvaluationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	); err != nil {
 		return err
 	}
+
+	// applyEnforcement uses client.MatchingFields on PlatformAccessApproval to
+	// detect whether an approval already exists for the user before creating
+	// one. The cached client requires a registered IndexField for that lookup,
+	// even though spec.subjectRef.userRef.name is already a server-side
+	// selectable field on the CRD.
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&iamv1alpha1.PlatformAccessApproval{},
+		"spec.subjectRef.userRef.name",
+		func(obj client.Object) []string {
+			paa, ok := obj.(*iamv1alpha1.PlatformAccessApproval)
+			if !ok {
+				return nil
+			}
+			if paa.Spec.SubjectRef.UserRef == nil {
+				return nil
+			}
+			return []string{paa.Spec.SubjectRef.UserRef.Name}
+		},
+	); err != nil {
+		return fmt.Errorf("failed to set field index on PlatformAccessApproval: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fraudv1alpha1.FraudEvaluation{}).
 		Named("fraudevaluation").
