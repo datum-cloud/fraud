@@ -47,6 +47,11 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
+		By("installing milo IAM CRDs (PlatformAccessApproval, etc.)")
+		cmd = exec.Command("make", "install-milo-crds")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to install milo IAM CRDs")
+
 		By("deploying the controller-manager")
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = utils.Run(cmd)
@@ -79,6 +84,10 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 
 		By("uninstalling CRDs")
 		cmd = exec.Command("make", "uninstall", "ignore-not-found=true")
+		_, _ = utils.Run(cmd)
+
+		By("uninstalling milo IAM CRDs")
+		cmd = exec.Command("make", "uninstall-milo-crds", "ignore-not-found=true")
 		_, _ = utils.Run(cmd)
 
 		By("cleaning up e2e credentials secret")
