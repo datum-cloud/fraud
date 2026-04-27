@@ -740,6 +740,52 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 		})
 
+		It("should skip PAA creation if user already has a PlatformAccessRejection", func() {
+			createResources(15, "FailOpen", "AUTO")
+
+			// Pre-create a rejection for the user (e.g. from a prior REVIEW
+			// evaluation or admin action). The IAM webhook would block any
+			// PAA create for the same subject; the controller must detect
+			// this and skip rather than retry-loop.
+			rejection := &iamv1alpha1.PlatformAccessRejection{
+				ObjectMeta: metav1.ObjectMeta{Name: "prior-eval-rejection"},
+				Spec: iamv1alpha1.PlatformAccessRejectionSpec{
+					UserRef: iamv1alpha1.UserReference{Name: "user-prerejected"},
+					Reason:  "fraud-review",
+				},
+			}
+			Expect(k8sClient.Create(ctx, rejection)).To(Succeed())
+
+			eval := &fraudv1alpha1.FraudEvaluation{
+				ObjectMeta: metav1.ObjectMeta{Name: "eval-prerejected"},
+				Spec: fraudv1alpha1.FraudEvaluationSpec{
+					UserRef:   fraudv1alpha1.UserReference{Name: "user-prerejected"},
+					PolicyRef: fraudv1alpha1.PolicyReference{Name: policyName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, eval)).To(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "eval-prerejected"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-prerejected"}, eval)).To(Succeed())
+			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionAccepted))
+
+			// No PAA should have been created.
+			paaList := &iamv1alpha1.PlatformAccessApprovalList{}
+			Expect(k8sClient.List(ctx, paaList)).To(Succeed())
+			Expect(paaList.Items).To(BeEmpty())
+
+			// EnforcementApplied condition should be set with RejectionExists reason.
+			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal("RejectionExists"))
+			Expect(cond.Message).To(ContainSubstring("prior-eval-rejection"))
+		})
+
 		It("should set Error phase when provider is not registered", func() {
 			// Create resources but do NOT register anything in the registry.
 			fp := &fraudv1alpha1.FraudProvider{

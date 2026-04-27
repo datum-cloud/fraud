@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -504,6 +505,30 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		log.Info("PlatformAccessRejection ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	case fraudv1alpha1.DecisionAccepted:
+		// The IAM admission webhook denies PlatformAccessApproval creation if a
+		// PlatformAccessRejection already exists for the same subject. Check for
+		// one first and skip approval creation rather than retry-looping. The
+		// rejection may be intentional (admin-owned or from a prior REVIEW
+		// evaluation) so we do not auto-delete it — surface the conflict and
+		// require manual reconciliation.
+		var rejections iamv1alpha1.PlatformAccessRejectionList
+		if err := r.List(ctx, &rejections, client.MatchingFields{"spec.subjectRef.name": eval.Spec.UserRef.Name}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessRejections for user %q: %w", eval.Spec.UserRef.Name, err)
+		}
+		if len(rejections.Items) > 0 {
+			rejectionNames := make([]string, 0, len(rejections.Items))
+			for i := range rejections.Items {
+				rejectionNames = append(rejectionNames, rejections.Items[i].Name)
+			}
+			log.Info("skipping PlatformAccessApproval creation: rejection already exists for user",
+				"user", eval.Spec.UserRef.Name,
+				"rejections", rejectionNames)
+			return r.setEnforcementAppliedCondition(
+				ctx, eval, "RejectionExists",
+				fmt.Sprintf("Enforcement skipped: existing PlatformAccessRejection(s) for user %q: %s", eval.Spec.UserRef.Name, strings.Join(rejectionNames, ", ")),
+			)
+		}
+
 		var paas iamv1alpha1.PlatformAccessApprovalList
 		if err := r.List(ctx, &paas, client.MatchingFields{"spec.subjectRef.userRef.name": eval.Spec.UserRef.Name}); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessApprovals for user %q: %w", eval.Spec.UserRef.Name, err)
@@ -587,6 +612,26 @@ func (r *FraudEvaluationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		},
 	); err != nil {
 		return fmt.Errorf("failed to set field index on PlatformAccessApproval: %w", err)
+	}
+
+	// applyEnforcement also uses client.MatchingFields on PlatformAccessRejection
+	// to detect whether a rejection already exists for the user before attempting
+	// to create an approval (which the IAM admission webhook would otherwise
+	// deny). Note the field path is the flat spec.subjectRef.name — different
+	// from PAA's nested spec.subjectRef.userRef.name.
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&iamv1alpha1.PlatformAccessRejection{},
+		"spec.subjectRef.name",
+		func(obj client.Object) []string {
+			par, ok := obj.(*iamv1alpha1.PlatformAccessRejection)
+			if !ok {
+				return nil
+			}
+			return []string{par.Spec.UserRef.Name}
+		},
+	); err != nil {
+		return fmt.Errorf("failed to set field index on PlatformAccessRejection: %w", err)
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
