@@ -199,22 +199,14 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 # MILO_REF pins the milo branch/tag/SHA used to fetch IAM CRDs for e2e tests.
 MILO_REF ?= main
 MILO_IAM_CRDS_URL ?= https://github.com/datum-cloud/milo//config/crd/bases/iam?ref=$(MILO_REF)
-MILO_RAW_BASE ?= https://raw.githubusercontent.com/datum-cloud/milo/$(MILO_REF)/config/crd/bases/iam
-
-# Milo's iam kustomization.yaml currently omits PlatformAccessRejection (and a
-# few others), so we apply the rejection CRD directly. Drop this once milo
-# adds it to the kustomization.
-MILO_EXTRA_CRDS ?= $(MILO_RAW_BASE)/iam.miloapis.com_platformaccessrejections.yaml
 
 .PHONY: install-milo-crds
 install-milo-crds: ## Install milo IAM CRDs (PlatformAccessApproval, PlatformAccessRejection, etc.) needed by the controller cache informers in e2e.
 	$(KUBECTL) apply -k $(MILO_IAM_CRDS_URL)
-	$(KUBECTL) apply -f $(MILO_EXTRA_CRDS)
 
 .PHONY: uninstall-milo-crds
 uninstall-milo-crds: ## Uninstall milo IAM CRDs. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -k $(MILO_IAM_CRDS_URL)
-	$(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f $(MILO_EXTRA_CRDS)
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
