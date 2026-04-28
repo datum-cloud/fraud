@@ -7,6 +7,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
@@ -17,16 +18,6 @@ import (
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 	"go.miloapis.com/fraud/internal/provider"
 )
-
-// findCondition returns the condition with the given type, or nil if not found.
-func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
-	for i := range conditions {
-		if conditions[i].Type == condType {
-			return &conditions[i]
-		}
-	}
-	return nil
-}
 
 // mockProvider is a test implementation of provider.Provider.
 type mockProvider struct {
@@ -562,7 +553,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(eval.Status.History).To(HaveLen(1))
 		})
 
-		It("AUTO mode REVIEW decision should create PlatformAccessRejection", func() {
+		It("AUTO mode REVIEW decision should defer enforcement, not create a PlatformAccessRejection", func() {
 			createResources(75, "FailOpen", "AUTO")
 
 			eval := &fraudv1alpha1.FraudEvaluation{
@@ -582,10 +573,16 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-review-auto"}, eval)).To(Succeed())
 			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionReview))
 
-			rejection := &iamv1alpha1.PlatformAccessRejection{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-review-auto"}, rejection)).To(Succeed())
-			Expect(rejection.Spec.UserRef.Name).To(Equal("user-review"))
-			Expect(rejection.Spec.Reason).To(Equal("fraud-review"))
+			// No PAR should be created — REVIEW now defers to human review.
+			parList := &iamv1alpha1.PlatformAccessRejectionList{}
+			Expect(k8sClient.List(ctx, parList)).To(Succeed())
+			Expect(parList.Items).To(BeEmpty())
+
+			// EnforcementApplied condition should reflect the deferral.
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal("ReviewRequired"))
 		})
 
 		It("AUTO mode ACCEPTED decision should create PlatformAccessApproval", func() {
@@ -638,7 +635,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 
 			// EnforcementApplied condition should still be set with ObserveMode reason.
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-observe-noiam"}, eval)).To(Succeed())
-			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Reason).To(Equal("ObserveMode"))
 		})
@@ -735,9 +732,55 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(paaList.Items[0].Name).To(Equal("prior-eval-approval"))
 
 			// EnforcementApplied condition should still be set.
-			cond := findCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+		})
+
+		It("should skip PAA creation if user already has a PlatformAccessRejection", func() {
+			createResources(15, "FailOpen", "AUTO")
+
+			// Pre-create a rejection for the user (e.g. from a prior REVIEW
+			// evaluation or admin action). The IAM webhook would block any
+			// PAA create for the same subject; the controller must detect
+			// this and skip rather than retry-loop.
+			rejection := &iamv1alpha1.PlatformAccessRejection{
+				ObjectMeta: metav1.ObjectMeta{Name: "prior-eval-rejection"},
+				Spec: iamv1alpha1.PlatformAccessRejectionSpec{
+					UserRef: iamv1alpha1.UserReference{Name: "user-prerejected"},
+					Reason:  "fraud-review",
+				},
+			}
+			Expect(k8sClient.Create(ctx, rejection)).To(Succeed())
+
+			eval := &fraudv1alpha1.FraudEvaluation{
+				ObjectMeta: metav1.ObjectMeta{Name: "eval-prerejected"},
+				Spec: fraudv1alpha1.FraudEvaluationSpec{
+					UserRef:   fraudv1alpha1.UserReference{Name: "user-prerejected"},
+					PolicyRef: fraudv1alpha1.PolicyReference{Name: policyName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, eval)).To(Succeed())
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "eval-prerejected"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-prerejected"}, eval)).To(Succeed())
+			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionAccepted))
+
+			// No PAA should have been created.
+			paaList := &iamv1alpha1.PlatformAccessApprovalList{}
+			Expect(k8sClient.List(ctx, paaList)).To(Succeed())
+			Expect(paaList.Items).To(BeEmpty())
+
+			// EnforcementApplied condition should be set with RejectionExists reason.
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal("RejectionExists"))
+			Expect(cond.Message).To(ContainSubstring("prior-eval-rejection"))
 		})
 
 		It("should set Error phase when provider is not registered", func() {
