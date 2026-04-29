@@ -40,12 +40,12 @@ const (
 	enforcementResourcePrefix = "fraud-"
 
 	// recentUserThreshold is the maximum age of a user for which the
-	// reconciler will retry resolution of incomplete audit data.
+	// reconciler will retry resolution of incomplete session data.
 	recentUserThreshold = 2 * time.Minute
 
-	// auditDataRetryDelay is the requeue interval when waiting for
-	// audit log data to become available for a recent user.
-	auditDataRetryDelay = 5 * time.Second
+	// sessionDataRetryDelay is the requeue interval when waiting for
+	// a session record to become available for a recent user.
+	sessionDataRetryDelay = 5 * time.Second
 )
 
 // actionPriority maps decision strings to a numeric priority for comparison.
@@ -76,7 +76,7 @@ type FraudEvaluationReconciler struct {
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=userdeactivations,verbs=get;create;update;patch
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessapprovals,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessrejections,verbs=get;list;watch;create
-// +kubebuilder:rbac:groups=activity.miloapis.com,resources=auditlogqueries,verbs=create
+// +kubebuilder:rbac:groups=identity.miloapis.com,resources=sessions,verbs=list
 
 // Reconcile runs the fraud evaluation pipeline for a FraudEvaluation resource.
 func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -361,16 +361,16 @@ func (r *FraudEvaluationReconciler) resolveInput(
 		return input, nil
 	}
 
-	// Audit data is incomplete. For recent users, requeue to allow the
-	// data to become available before calling providers.
+	// Session data is incomplete. For recent users, requeue to allow the
+	// first session to land before calling providers.
 	var user iamv1alpha1.User
 	if userErr := r.Get(ctx, types.NamespacedName{Name: eval.Spec.UserRef.Name}, &user); userErr == nil {
 		if time.Since(user.CreationTimestamp.Time) < recentUserThreshold {
-			log.Info("audit data incomplete for recent user, will retry",
+			log.Info("session data incomplete for recent user, will retry",
 				"user", eval.Spec.UserRef.Name,
 				"userAge", time.Since(user.CreationTimestamp.Time).Round(time.Second))
 
-			return input, &ctrl.Result{RequeueAfter: auditDataRetryDelay}
+			return input, &ctrl.Result{RequeueAfter: sessionDataRetryDelay}
 		}
 	}
 

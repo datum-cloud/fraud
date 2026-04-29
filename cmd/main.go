@@ -16,14 +16,15 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	activityv1alpha1 "go.miloapis.com/activity/pkg/apis/activity/v1alpha1"
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
+	identityv1alpha1 "go.miloapis.com/milo/pkg/apis/identity/v1alpha1"
 
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
 	"go.miloapis.com/fraud/internal/controller"
@@ -41,7 +42,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(fraudv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(iamv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(activityv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(identityv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -185,6 +186,16 @@ func main() {
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "3f838346.miloapis.com",
 		LeaderElectionConfig:   leaderElectionCfg,
+		Client: client.Options{
+			Cache: &client.CacheOptions{
+				// Sessions is served by the auth-provider-zitadel aggregated
+				// apiserver, which does not implement Watch. Bypass the cache
+				// for this type so List goes straight to the API server.
+				DisableFor: []client.Object{
+					&identityv1alpha1.Session{},
+				},
+			},
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly

@@ -4,21 +4,20 @@ package datasource
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	activityv1alpha1 "go.miloapis.com/activity/pkg/apis/activity/v1alpha1"
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
+	identityv1alpha1 "go.miloapis.com/milo/pkg/apis/identity/v1alpha1"
 
 	"go.miloapis.com/fraud/internal/provider"
 )
 
-// Resolver fetches data from the platform's User CRD and audit log API
-// to build a provider.Input for the fraud evaluation pipeline.
+// Resolver fetches data from the platform's User CRD and the identity Sessions
+// API to build a provider.Input for the fraud evaluation pipeline.
 type Resolver struct {
 	client client.Client
 }
@@ -28,52 +27,49 @@ func NewResolver(c client.Client) *Resolver {
 	return &Resolver{client: c}
 }
 
-// Resolve fetches the User resource and the most recent audit log entry
-// for the given user, returning a populated provider.Input.
+// Resolve fetches the User resource and the most recent Session for the given
+// user, returning a populated provider.Input.
 //
-// Missing data is handled gracefully — if the User or audit log is
-// unavailable, the corresponding fields are simply empty. Providers
-// handle missing fields on their own.
-func (r *Resolver) Resolve(ctx context.Context, userName string) (provider.Input, error) {
+// Missing data is handled gracefully — if the User or Session is unavailable,
+// the corresponding fields are simply empty. Providers handle missing fields
+// on their own.
+func (r *Resolver) Resolve(ctx context.Context, userUID string) (provider.Input, error) {
 	log := logf.FromContext(ctx)
 
 	var input provider.Input
 
-	// Fetch the User resource.
-	if err := r.resolveUser(ctx, userName, &input); err != nil {
-		log.Info("failed to resolve user data, continuing with empty user fields", "user", userName, "error", err)
+	if err := r.resolveUser(ctx, userUID, &input); err != nil {
+		log.Info("failed to resolve user data, continuing with empty user fields", "user", userUID, "error", err)
 	}
 
-	// Fetch the most recent audit log entry for the user.
-	var auditErr error
-	if err := r.resolveAuditLog(ctx, userName, &input); err != nil {
-		log.Info("failed to resolve audit log data, continuing with empty audit fields", "user", userName, "error", err)
-		auditErr = err
+	var sessionErr error
+	if err := r.resolveSession(ctx, userUID, &input); err != nil {
+		log.Info("failed to resolve session data, continuing with empty session fields", "user", userUID, "error", err)
+		sessionErr = err
 	}
 
 	log.Info("resolved provider input",
-		"user", userName,
+		"user", userUID,
 		"email", input.EmailAddress,
 		"emailDomain", input.EmailDomain,
 		"ip", input.IPAddress,
 		"userAgent", input.UserAgent,
 	)
 
-	return input, auditErr
+	return input, sessionErr
 }
 
 // resolveUser fetches the User CR and populates email and name fields.
-func (r *Resolver) resolveUser(ctx context.Context, userName string, input *provider.Input) error {
+func (r *Resolver) resolveUser(ctx context.Context, userUID string, input *provider.Input) error {
 	var user iamv1alpha1.User
-	if err := r.client.Get(ctx, types.NamespacedName{Name: userName}, &user); err != nil {
-		return fmt.Errorf("failed to get User %q: %w", userName, err)
+	if err := r.client.Get(ctx, client.ObjectKey{Name: userUID}, &user); err != nil {
+		return fmt.Errorf("failed to get User %q: %w", userUID, err)
 	}
 
 	input.EmailAddress = user.Spec.Email
 	input.FirstName = user.Spec.GivenName
 	input.LastName = user.Spec.FamilyName
 
-	// Extract domain from email address.
 	if parts := strings.SplitN(user.Spec.Email, "@", 2); len(parts) == 2 {
 		input.EmailDomain = parts[1]
 	}
@@ -81,36 +77,38 @@ func (r *Resolver) resolveUser(ctx context.Context, userName string, input *prov
 	return nil
 }
 
-// resolveAuditLog creates an AuditLogQuery to find the most recent audit
-// event for the user and extracts IP address and user agent.
-func (r *Resolver) resolveAuditLog(ctx context.Context, userName string, input *provider.Input) error {
-	query := &activityv1alpha1.AuditLogQuery{
-		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "fraud-eval-",
-		},
-		Spec: activityv1alpha1.AuditLogQuerySpec{
-			StartTime: "now-30d",
-			EndTime:   "now",
-			Filter:    fmt.Sprintf("user.uid == '%s'", userName),
-			Limit:     1,
-		},
+// resolveSession lists the user's Sessions from the identity API, picks the
+// most recent one (LastUpdatedAt desc, then CreatedAt desc), and copies the
+// IP and UserAgent into input.
+//
+// The Sessions API is an aggregated apiserver; the manager client is configured
+// to bypass the cache for this type via Cache.DisableFor in main.go.
+func (r *Resolver) resolveSession(ctx context.Context, userUID string, input *provider.Input) error {
+	var sessions identityv1alpha1.SessionList
+	if err := r.client.List(ctx, &sessions, client.MatchingFields{"status.userUID": userUID}); err != nil {
+		return fmt.Errorf("failed to list Sessions for user %q: %w", userUID, err)
 	}
 
-	if err := r.client.Create(ctx, query); err != nil {
-		return fmt.Errorf("failed to create AuditLogQuery for user %q: %w", userName, err)
+	if len(sessions.Items) == 0 {
+		return fmt.Errorf("no sessions found for user %q", userUID)
 	}
 
-	if len(query.Status.Results) == 0 {
-		return fmt.Errorf("no audit log entries found for user %q", userName)
-	}
+	sort.Slice(sessions.Items, func(i, j int) bool {
+		ai, aj := sessions.Items[i].Status, sessions.Items[j].Status
+		ti := ai.CreatedAt.Time
+		if ai.LastUpdatedAt != nil {
+			ti = ai.LastUpdatedAt.Time
+		}
+		tj := aj.CreatedAt.Time
+		if aj.LastUpdatedAt != nil {
+			tj = aj.LastUpdatedAt.Time
+		}
+		return ti.After(tj)
+	})
 
-	event := query.Status.Results[0]
-
-	if len(event.SourceIPs) > 0 {
-		input.IPAddress = event.SourceIPs[0]
-	}
-
-	input.UserAgent = event.UserAgent
+	latest := sessions.Items[0].Status
+	input.IPAddress = latest.IP
+	input.UserAgent = latest.UserAgent
 
 	return nil
 }
