@@ -783,6 +783,65 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(cond.Message).To(ContainSubstring("prior-eval-rejection"))
 		})
 
+		// Regression: in prod we observed evaluations stuck with status.decision=ACCEPTED
+		// but EnforcementApplied=True with reason="SkippedUnknownDecision" and
+		// message=`unrecognised decision ""`. Same reconcileID logged "evaluation
+		// completed decision: ACCEPTED" then immediately "skipping enforcement for
+		// unrecognised decision decision: ''". Root cause: Reconcile re-fetches the
+		// eval via the cached client after Status().Update, the cache hasn't seen
+		// the update yet, the stale read has decision="", applyEnforcement's default
+		// branch sets EnforcementApplied=True permanently, and the short-circuit at
+		// the top of applyEnforcement blocks any future retry.
+		//
+		// This test exercises the same observable state by calling applyEnforcement
+		// directly with an eval whose status.decision is empty. With the fix
+		// (default branch returns without setting the condition when decision==""),
+		// no PAA is created and no terminal condition is set, so the next reconcile
+		// can recover. Without the fix, the eval is permanently locked.
+		It("should not permanently lock an eval when applyEnforcement is called with an empty decision (cache-lag race regression)", func() {
+			createResources(15, "FailOpen", "AUTO")
+
+			eval := &fraudv1alpha1.FraudEvaluation{
+				ObjectMeta: metav1.ObjectMeta{Name: "eval-empty-decision"},
+				Spec: fraudv1alpha1.FraudEvaluationSpec{
+					UserRef:   fraudv1alpha1.UserReference{Name: "user-empty-decision"},
+					PolicyRef: fraudv1alpha1.PolicyReference{Name: policyName},
+				},
+			}
+			Expect(k8sClient.Create(ctx, eval)).To(Succeed())
+
+			// Storage state: pipeline already ran, decision is ACCEPTED, phase is
+			// Completed. This is what the API server would have after the
+			// Status().Update at fraudevaluation_controller.go:187.
+			eval.Status.Phase = fraudv1alpha1.PhaseCompleted
+			eval.Status.Decision = fraudv1alpha1.DecisionAccepted
+			eval.Status.EnforcementAction = "ENFORCED"
+			Expect(k8sClient.Status().Update(ctx, eval)).To(Succeed())
+
+			var policy fraudv1alpha1.FraudPolicy
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: policyName}, &policy)).To(Succeed())
+
+			// Stale snapshot: this is what r.Get returns from the cache before
+			// the watch event for the Update above has been delivered. Same name
+			// (so the patch in setEnforcementAppliedCondition targets the live
+			// object) but decision="".
+			stale := eval.DeepCopy()
+			stale.Status.Decision = ""
+
+			_, err := reconciler.applyEnforcement(ctx, stale, &policy)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Re-fetch the live object: it should NOT have been permanently
+			// marked EnforcementApplied=SkippedUnknownDecision based on the
+			// stale empty decision.
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-empty-decision"}, eval)).To(Succeed())
+			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
+			if cond != nil {
+				Expect(cond.Reason).NotTo(Equal("SkippedUnknownDecision"),
+					"applyEnforcement must not lock the eval with SkippedUnknownDecision when decision is empty — that prevents the next reconcile (which sees the real ACCEPTED decision) from creating the PAA")
+			}
+		})
+
 		It("should set Error phase when provider is not registered", func() {
 			// Create resources but do NOT register anything in the registry.
 			fp := &fraudv1alpha1.FraudProvider{
