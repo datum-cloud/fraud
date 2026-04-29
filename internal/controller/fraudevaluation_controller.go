@@ -108,10 +108,11 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return r.applyEnforcement(ctx, &eval, &policy)
 	}
 
-	// 3. Set phase to Running and update status.
+	// 3. Set phase to Running.
 	if eval.Status.Phase != fraudv1alpha1.PhaseRunning {
+		base := eval.DeepCopy()
 		eval.Status.Phase = fraudv1alpha1.PhaseRunning
-		if err := r.Status().Update(ctx, &eval); err != nil {
+		if err := r.Status().Patch(ctx, &eval, client.MergeFrom(base)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to set phase to Running: %w", err)
 		}
 	}
@@ -151,11 +152,9 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// 8. Determine enforcement action based on policy mode.
 	enforcementAction := r.determineEnforcement(policy.Spec.Enforcement.Mode, decision)
 
-	// 9. Add to history (prepend, trim to maxEntries).
+	// 9. Compute the new history entry (don't mutate eval yet).
 	now := metav1.Now()
-
 	compositeScoreStr := strconv.FormatFloat(compositeScore, 'f', 2, 64)
-
 	historyEntry := fraudv1alpha1.HistoryEntry{
 		Timestamp:      now,
 		CompositeScore: compositeScoreStr,
@@ -163,12 +162,16 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		Trigger:        eval.Status.Trigger,
 	}
 
+	// 10. Snapshot the pre-mutation state, then apply all status mutations and
+	// patch them atomically. The base must be captured before ANY status
+	// modifications below, otherwise client.MergeFrom won't include the
+	// pre-snapshot mutations in the diff and they'll silently be dropped.
+	base := eval.DeepCopy()
+
 	eval.Status.History = append([]fraudv1alpha1.HistoryEntry{historyEntry}, eval.Status.History...)
 	if len(eval.Status.History) > maxEntries {
 		eval.Status.History = eval.Status.History[:maxEntries]
 	}
-
-	// 10. Set phase to Completed and update all status fields.
 	eval.Status.Phase = fraudv1alpha1.PhaseCompleted
 	eval.Status.CompositeScore = compositeScoreStr
 	eval.Status.Decision = decision
@@ -184,8 +187,8 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		ObservedGeneration: eval.Generation,
 	})
 
-	if err := r.Status().Update(ctx, &eval); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to update status to Completed: %w", err)
+	if err := r.Status().Patch(ctx, &eval, client.MergeFrom(base)); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to patch status to Completed: %w", err)
 	}
 
 	log.Info("evaluation completed",
@@ -194,12 +197,14 @@ func (r *FraudEvaluationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		"enforcementAction", enforcementAction,
 		"stages", len(stageResults))
 
-	// 11. Re-fetch to get the latest resourceVersion before patching status again.
-	if err := r.Get(ctx, req.NamespacedName, &eval); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to re-fetch FraudEvaluation after completion: %w", err)
-	}
-
-	// 12. Apply enforcement based on policy mode and decision.
+	// 11. Apply enforcement based on policy mode and decision. Use the
+	// in-memory eval — the patch above populated ResourceVersion in place,
+	// so the patch in setEnforcementAppliedCondition will target the correct
+	// revision. We deliberately do NOT re-Get from the cache here: the watch
+	// event for the patch above may not have propagated yet, and a stale read
+	// with decision="" would push applyEnforcement into the default branch
+	// and permanently mark the eval EnforcementApplied=SkippedUnknownDecision,
+	// blocking all future retries.
 	return r.applyEnforcement(ctx, &eval, &policy)
 }
 
@@ -427,6 +432,8 @@ func (r *FraudEvaluationReconciler) setErrorPhase(ctx context.Context, eval *fra
 	log := logf.FromContext(ctx)
 	log.Error(fmt.Errorf("%s", message), "evaluation failed")
 
+	base := eval.DeepCopy()
+
 	eval.Status.Phase = fraudv1alpha1.PhaseError
 
 	meta.SetStatusCondition(&eval.Status.Conditions, metav1.Condition{
@@ -437,7 +444,7 @@ func (r *FraudEvaluationReconciler) setErrorPhase(ctx context.Context, eval *fra
 		ObservedGeneration: eval.Generation,
 	})
 
-	if err := r.Status().Update(ctx, eval); err != nil {
+	if err := r.Status().Patch(ctx, eval, client.MergeFrom(base)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to set Error phase: %w", err)
 	}
 
@@ -542,6 +549,15 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		log.Info("PlatformAccessApproval ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
 	default:
+		// Empty decision means we were called before status.decision was set
+		// (e.g. a stale read between Status().Update and the cache catching up).
+		// Returning a non-terminal condition would lock the eval forever via the
+		// EnforcementApplied=True short-circuit at the top of this function. Just
+		// requeue and let the next reconcile observe the real decision.
+		if eval.Status.Decision == "" {
+			log.Info("decision not yet observed, requeueing for next reconcile", "eval", eval.Name)
+			return ctrl.Result{Requeue: true}, nil
+		}
 		// Unknown or legacy decision value — log and skip enforcement rather than error-looping.
 		log.Info("skipping enforcement for unrecognised decision", "decision", eval.Status.Decision)
 		return r.setEnforcementAppliedCondition(ctx, eval, "SkippedUnknownDecision", fmt.Sprintf("Enforcement skipped: unrecognised decision %q", eval.Status.Decision))
