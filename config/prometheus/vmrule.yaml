@@ -83,3 +83,14 @@ spec:
           annotations:
             summary: "Fraud evaluation {{ $labels.name }} is degraded"
             description: "Fraud evaluation {{ $labels.name }} has been in a degraded state for 5+ minutes, indicating one or more providers returned errors during evaluation."
+
+        - alert: FraudEvaluationUserDeactivatedOrReview
+          expr: |
+            max by (name, user_ref, decision) (fraud_evaluation_info{decision=~"DEACTIVATE|REVIEW"}) == 1
+          for: 0m
+          labels:
+            severity: warning
+            slack_channel: user-bot
+          annotations:
+            summary: "Fraud check returned {{ $labels.decision }} for user {{ $labels.user_ref }}"
+            description: "FraudEvaluation {{ $labels.name }} returned decision={{ $labels.decision }} for user {{ $labels.user_ref }}. Review the user and take action if needed."
