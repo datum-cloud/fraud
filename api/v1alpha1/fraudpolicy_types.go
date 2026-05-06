@@ -151,6 +151,7 @@ type FraudPolicyStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:metadata:annotations="discovery.miloapis.com/parent-contexts=Platform"
 
 // FraudPolicy is the Schema for the fraudpolicies API.
 // It defines the fraud evaluation pipeline including stages, thresholds,

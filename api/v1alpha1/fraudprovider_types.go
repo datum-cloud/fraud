@@ -90,6 +90,7 @@ type FraudProviderStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:metadata:annotations="discovery.miloapis.com/parent-contexts=Platform"
 
 // FraudProvider is the Schema for the fraudproviders API.
 // It represents a fraud detection provider backend (e.g. MaxMind minFraud).
