@@ -80,6 +80,10 @@ type deviceField struct {
 	IPAddress      string `json:"ip_address,omitempty"`
 	UserAgent      string `json:"user_agent,omitempty"`
 	AcceptLanguage string `json:"accept_language,omitempty"`
+	// TrackingToken is the value returned by the device.js / trackDevice()
+	// browser SDK. MaxMind documents this as `device.tracking_token` and uses
+	// it for explicit device linking across sessions.
+	TrackingToken string `json:"tracking_token,omitempty"`
 }
 
 type emailField struct {
@@ -158,11 +162,12 @@ func buildRequest(input provider.Input) minfraudRequest {
 	var req minfraudRequest
 
 	// Build device field if any device-related input is provided.
-	if input.IPAddress != "" || input.UserAgent != "" || input.AcceptLanguage != "" {
+	if input.IPAddress != "" || input.UserAgent != "" || input.AcceptLanguage != "" || input.TrackingToken != "" {
 		req.Device = &deviceField{
 			IPAddress:      input.IPAddress,
 			UserAgent:      input.UserAgent,
 			AcceptLanguage: input.AcceptLanguage,
+			TrackingToken:  input.TrackingToken,
 		}
 	}
 
