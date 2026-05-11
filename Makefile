@@ -1,5 +1,5 @@
 # Image URL to use all building/pushing image targets
-IMG ?= ghcr.io/datum-cloud/fraud:latest
+IMG ?= ghcr.io/milo-os/fraud:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -198,7 +198,7 @@ uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified 
 
 # MILO_REF pins the milo branch/tag/SHA used to fetch IAM CRDs for e2e tests.
 MILO_REF ?= main
-MILO_IAM_CRDS_URL ?= https://github.com/datum-cloud/milo//config/crd/bases/iam?ref=$(MILO_REF)
+MILO_IAM_CRDS_URL ?= https://github.com/milo-os/milo//config/crd/bases/iam?ref=$(MILO_REF)
 
 .PHONY: install-milo-crds
 install-milo-crds: ## Install milo IAM CRDs (PlatformAccessApproval, PlatformAccessRejection, etc.) needed by the controller cache informers in e2e.

@@ -25,8 +25,8 @@ jobs:
       packages: write
     uses: datum-cloud/actions/.github/workflows/publish-kustomize-bundle.yaml@v1.9.0
     with:
-      bundle-name: ghcr.io/datum-cloud/fraud-kustomize
+      bundle-name: ghcr.io/milo-os/fraud-kustomize
       bundle-path: config
       image-overlays: config/manager
-      image-name: ghcr.io/datum-cloud/fraud
+      image-name: ghcr.io/milo-os/fraud
     secrets: inherit
