@@ -12,6 +12,11 @@ type Input struct {
 	IPAddress      string
 	UserAgent      string
 	AcceptLanguage string
+	// TrackingToken is the MaxMind minFraud device-tracking token captured by
+	// the browser SDK and attached to the Zitadel session at signup. The
+	// resolver reads it from the Session annotation written by
+	// auth-provider-zitadel; providers forward it as device.tracking_token.
+	TrackingToken string
 }
 
 // Result holds the output of a provider evaluation.

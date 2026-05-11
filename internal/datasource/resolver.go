@@ -16,6 +16,13 @@ import (
 	"go.miloapis.com/fraud/internal/provider"
 )
 
+// MaxMindTrackingTokenAnnotation is the milo Session annotation key that
+// auth-provider-zitadel populates from Zitadel session metadata. The
+// resolver reads it from the latest Session and forwards the value to
+// MaxMind as device.tracking_token. Missing annotation is non-fatal —
+// fraud evaluation continues with the other signals.
+const MaxMindTrackingTokenAnnotation = "iam.miloapis.com/maxmind-tracking-token"
+
 // Resolver fetches data from the platform's User CRD and the identity Sessions
 // API to build a provider.Input for the fraud evaluation pipeline.
 type Resolver struct {
@@ -54,6 +61,7 @@ func (r *Resolver) Resolve(ctx context.Context, userUID string) (provider.Input,
 		"emailDomain", input.EmailDomain,
 		"ip", input.IPAddress,
 		"userAgent", input.UserAgent,
+		"hasTrackingToken", input.TrackingToken != "",
 	)
 
 	return input, sessionErr
@@ -106,9 +114,12 @@ func (r *Resolver) resolveSession(ctx context.Context, userUID string, input *pr
 		return ti.After(tj)
 	})
 
-	latest := sessions.Items[0].Status
-	input.IPAddress = latest.IP
-	input.UserAgent = latest.UserAgent
+	latest := sessions.Items[0]
+	input.IPAddress = latest.Status.IP
+	input.UserAgent = latest.Status.UserAgent
+	if token := latest.Annotations[MaxMindTrackingTokenAnnotation]; token != "" {
+		input.TrackingToken = token
+	}
 
 	return nil
 }

@@ -160,6 +160,7 @@ func TestEvaluate_AllFieldsSent(t *testing.T) {
 		EmailDomain:    "example.com",
 		UserAgent:      "Mozilla/5.0",
 		AcceptLanguage: "en-US",
+		TrackingToken:  "tok-abc123",
 	})
 
 	device, ok := receivedBody["device"].(map[string]interface{})
@@ -171,6 +172,7 @@ func TestEvaluate_AllFieldsSent(t *testing.T) {
 		"ip_address":      "1.2.3.4",
 		"user_agent":      "Mozilla/5.0",
 		"accept_language": "en-US",
+		"tracking_token":  "tok-abc123",
 	}
 	for k, v := range want {
 		if device[k] != v {
@@ -215,6 +217,37 @@ func TestEvaluate_PartialInput(t *testing.T) {
 
 	if _, ok := receivedBody["email"]; ok {
 		t.Error("expected email field to be absent for IP-only input")
+	}
+}
+
+func TestEvaluate_TrackingTokenOnly(t *testing.T) {
+	t.Parallel()
+
+	var receivedBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &receivedBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"risk_score": 5.0, "id": "test-id"}`)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "acct123", "key456")
+	client.Evaluate(context.Background(), provider.Input{TrackingToken: "tok-only"})
+
+	device, ok := receivedBody["device"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected device field even when only tracking_token is set")
+	}
+
+	if got := device["tracking_token"]; got != "tok-only" {
+		t.Errorf("device.tracking_token = %v, want %q", got, "tok-only")
+	}
+
+	if _, ok := device["ip_address"]; ok {
+		t.Error("expected ip_address to be omitted when not set")
 	}
 }
 
