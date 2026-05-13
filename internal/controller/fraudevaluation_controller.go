@@ -462,10 +462,40 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		return ctrl.Result{}, nil
 	}
 
-	// OBSERVE mode: log but do not create enforcement resources.
+	// OBSERVE mode: always approve the user so they are not blocked, but record
+	// what the real decision would have been. No deactivation is ever created.
 	if policy.Spec.Enforcement.Mode == fraudv1alpha1.EnforcementModeObserve {
-		log.Info("enforcement skipped (OBSERVE mode)", "decision", eval.Status.Decision)
-		return r.setEnforcementAppliedCondition(ctx, eval, "ObserveMode", "Enforcement skipped: policy is in OBSERVE mode")
+		log.Info("OBSERVE mode: approving user regardless of decision", "decision", eval.Status.Decision, "user", eval.Spec.UserRef.Name)
+
+		var paas iamv1alpha1.PlatformAccessApprovalList
+		if err := r.List(ctx, &paas, client.MatchingFields{"spec.subjectRef.userRef.name": eval.Spec.UserRef.Name}); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessApprovals for user %q: %w", eval.Spec.UserRef.Name, err)
+		}
+		if len(paas.Items) == 0 {
+			resourceName := enforcementResourcePrefix + eval.Name
+			approval := &iamv1alpha1.PlatformAccessApproval{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: resourceName,
+					Annotations: map[string]string{
+						"fraud.miloapis.com/observe-mode":      "true",
+						"fraud.miloapis.com/observed-decision": eval.Status.Decision,
+						"fraud.miloapis.com/observed-score":    eval.Status.CompositeScore,
+					},
+				},
+				Spec: iamv1alpha1.PlatformAccessApprovalSpec{
+					SubjectRef: iamv1alpha1.SubjectReference{
+						UserRef: &iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
+					},
+				},
+			}
+			if err := r.Create(ctx, approval); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to create observer PlatformAccessApproval %q: %w", resourceName, err)
+			}
+			log.Info("observer PlatformAccessApproval created", "name", resourceName, "user", eval.Spec.UserRef.Name)
+		}
+
+		return r.setEnforcementAppliedCondition(ctx, eval, "ObserveMode",
+			fmt.Sprintf("User approved (OBSERVE mode); observed decision was %s (score: %s)", eval.Status.Decision, eval.Status.CompositeScore))
 	}
 
 	resourceName := enforcementResourcePrefix + eval.Name

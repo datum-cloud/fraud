@@ -611,7 +611,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(approval.Spec.SubjectRef.UserRef.Name).To(Equal("user-accepted"))
 		})
 
-		It("OBSERVE mode should not create any IAM resources", func() {
+		It("OBSERVE mode should approve the user and not create any deactivation resources", func() {
 			createResources(95, "FailOpen", "OBSERVE")
 
 			eval := &fraudv1alpha1.FraudEvaluation{
@@ -628,12 +628,18 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// No UserDeactivation should be created.
+			// No UserDeactivation should be created even for a high-score user.
 			deactivation := &iamv1alpha1.UserDeactivation{}
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-observe-noiam"}, deactivation)
 			Expect(err).To(HaveOccurred())
 
-			// EnforcementApplied condition should still be set with ObserveMode reason.
+			// A PlatformAccessApproval should be created so the user is not blocked.
+			approval := &iamv1alpha1.PlatformAccessApproval{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-observe-noiam"}, approval)).To(Succeed())
+			Expect(approval.Annotations).To(HaveKeyWithValue("fraud.miloapis.com/observe-mode", "true"))
+			Expect(approval.Annotations).To(HaveKeyWithValue("fraud.miloapis.com/observed-decision", fraudv1alpha1.DecisionDeactivate))
+
+			// EnforcementApplied condition should be set with ObserveMode reason.
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-observe-noiam"}, eval)).To(Succeed())
 			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
 			Expect(cond).NotTo(BeNil())
