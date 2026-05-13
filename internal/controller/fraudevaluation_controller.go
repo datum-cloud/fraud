@@ -477,9 +477,9 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 				ObjectMeta: metav1.ObjectMeta{
 					Name: resourceName,
 					Annotations: map[string]string{
-						"fraud.miloapis.com/observe-mode":       "true",
-						"fraud.miloapis.com/observed-decision":  eval.Status.Decision,
-						"fraud.miloapis.com/observed-score":     eval.Status.CompositeScore,
+						"fraud.miloapis.com/observe-mode":      "true",
+						"fraud.miloapis.com/observed-decision": eval.Status.Decision,
+						"fraud.miloapis.com/observed-score":    eval.Status.CompositeScore,
 					},
 				},
 				Spec: iamv1alpha1.PlatformAccessApprovalSpec{
