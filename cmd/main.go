@@ -23,6 +23,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	billingv1alpha1 "go.miloapis.com/billing/api/v1alpha1"
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 	identityv1alpha1 "go.miloapis.com/milo/pkg/apis/identity/v1alpha1"
 
@@ -43,6 +44,7 @@ func init() {
 	utilruntime.Must(fraudv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(iamv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(identityv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(billingv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -247,6 +249,13 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "UserFraudTrigger")
+		os.Exit(1)
+	}
+	if err := (&controller.BillingPaymentMethodAttachedTriggerReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BillingPaymentMethodAttachedTrigger")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

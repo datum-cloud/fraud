@@ -10,11 +10,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	billingv1alpha1 "go.miloapis.com/billing/api/v1alpha1"
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 	identityv1alpha1 "go.miloapis.com/milo/pkg/apis/identity/v1alpha1"
 
 	"go.miloapis.com/fraud/internal/provider"
 )
+
+// OwnerUserLabel is the label used on BillingAccount to identify the
+// owning user. The auto-billing-account controller (in milo) writes this
+// label at creation time. The fraud resolver uses it to find the user's
+// billing account when assembling the provider input.
+const OwnerUserLabel = "iam.miloapis.com/owner-user"
 
 // MaxMindTrackingTokenAnnotation is the milo Session annotation key that
 // auth-provider-zitadel populates from Zitadel session metadata. The
@@ -55,6 +62,10 @@ func (r *Resolver) Resolve(ctx context.Context, userUID string) (provider.Input,
 		sessionErr = err
 	}
 
+	if err := r.resolvePaymentMethod(ctx, userUID, &input); err != nil {
+		log.Info("failed to resolve payment-method data, continuing with empty card fields", "user", userUID, "error", err)
+	}
+
 	log.Info("resolved provider input",
 		"user", userUID,
 		"email", input.EmailAddress,
@@ -62,9 +73,48 @@ func (r *Resolver) Resolve(ctx context.Context, userUID string) (provider.Input,
 		"ip", input.IPAddress,
 		"userAgent", input.UserAgent,
 		"hasTrackingToken", input.TrackingToken != "",
+		"hasCreditCard", input.CreditCard.HasAny(),
 	)
 
 	return input, sessionErr
+}
+
+// resolvePaymentMethod finds the user's BillingAccount and copies its
+// attached payment-method metadata into input.CreditCard. Lookup is by the
+// `iam.miloapis.com/owner-user=<uid>` label written by the
+// auto-billing-account controller. Missing data is non-fatal.
+func (r *Resolver) resolvePaymentMethod(ctx context.Context, userUID string, input *provider.Input) error {
+	var accounts billingv1alpha1.BillingAccountList
+	if err := r.client.List(ctx, &accounts, client.MatchingLabels{OwnerUserLabel: userUID}); err != nil {
+		return fmt.Errorf("listing BillingAccounts for user %q: %w", userUID, err)
+	}
+	if len(accounts.Items) == 0 {
+		return fmt.Errorf("no BillingAccount found for user %q", userUID)
+	}
+	// When more than one BA is owned by the user, prefer one with a
+	// payment method attached; otherwise take the most recent.
+	pick := accounts.Items[0]
+	for i := range accounts.Items {
+		if accounts.Items[i].Status.PaymentMethod != nil {
+			pick = accounts.Items[i]
+			break
+		}
+		if accounts.Items[i].CreationTimestamp.After(pick.CreationTimestamp.Time) {
+			pick = accounts.Items[i]
+		}
+	}
+	if pick.Status.PaymentMethod == nil {
+		return fmt.Errorf("BillingAccount %s/%s has no attached payment method", pick.Namespace, pick.Name)
+	}
+	pm := pick.Status.PaymentMethod
+	input.CreditCard = provider.CreditCard{
+		IssuerIDNumber: pm.BIN,
+		LastDigits:     pm.Last4,
+		Country:        pm.Country,
+		AVSResult:      pm.AVSResult,
+		CVVResult:      pm.CVCResult,
+	}
+	return nil
 }
 
 // resolveUser fetches the User CR and populates email and name fields.

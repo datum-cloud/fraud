@@ -89,6 +89,21 @@ type EnforcementConfig struct {
 	Mode string `json:"mode"`
 }
 
+// Known TriggerConfig event names. Values map to controllers in
+// internal/controller/ that watch the corresponding upstream resource and
+// create a FraudEvaluation when fired.
+const (
+	// TriggerEventUserCreated fires when a User resource is created.
+	TriggerEventUserCreated = "UserCreated"
+
+	// TriggerEventBillingPaymentMethodAttached fires when a BillingAccount
+	// transitions to having a payment method attached (the
+	// PaymentMethodAttached condition flips to True). This is the
+	// authoritative signup-time trigger when the platform requires a
+	// card-on-file before granting access.
+	TriggerEventBillingPaymentMethodAttached = "BillingPaymentMethodAttached"
+)
+
 // TriggerConfig defines what triggers a fraud evaluation.
 type TriggerConfig struct {
 	// type is the kind of trigger.

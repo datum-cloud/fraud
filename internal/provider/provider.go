@@ -17,6 +17,36 @@ type Input struct {
 	// resolver reads it from the Session annotation written by
 	// auth-provider-zitadel; providers forward it as device.tracking_token.
 	TrackingToken string
+
+	// CreditCard carries sanitized card metadata sourced from the
+	// BillingAccount's attached payment method. All fields are
+	// individually optional — providers forward whatever is present.
+	CreditCard CreditCard
+}
+
+// CreditCard is the sanitized payment-method metadata fed into provider
+// scoring. Raw PAN is never carried here; only BIN, last4, and
+// verification results that issuers return as part of authorization.
+type CreditCard struct {
+	// IssuerIDNumber is the card BIN (first 6-8 digits). MaxMind names
+	// this `issuer.iin`.
+	IssuerIDNumber string
+	// LastDigits is the last 4 digits of the PAN.
+	LastDigits string
+	// Country is the ISO 3166-1 alpha-2 country of the issuer.
+	Country string
+	// AVSResult is the Address Verification System result from the
+	// issuer (single character: Y/N/A/Z/…).
+	AVSResult string
+	// CVVResult is the CVV verification result from the issuer
+	// (Y/N/P/X/U).
+	CVVResult string
+}
+
+// HasAny reports whether the CreditCard has any field populated.
+func (c CreditCard) HasAny() bool {
+	return c.IssuerIDNumber != "" || c.LastDigits != "" || c.Country != "" ||
+		c.AVSResult != "" || c.CVVResult != ""
 }
 
 // Result holds the output of a provider evaluation.

@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	billingv1alpha1 "go.miloapis.com/billing/api/v1alpha1"
 	iamv1alpha1 "go.miloapis.com/milo/pkg/apis/iam/v1alpha1"
 
 	fraudv1alpha1 "go.miloapis.com/fraud/api/v1alpha1"
@@ -548,6 +549,16 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 
 		log.Info("PlatformAccessApproval ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
 
+		// Mirror approval onto any BillingAccount owned by this user so
+		// the billing-account phase controller can transition to Ready.
+		// Failures here are non-fatal — the enforcement-applied condition
+		// on the eval is the authoritative signal; the BA mirror is a
+		// convenience for the gating front-end.
+		if err := r.markBillingAccountsApproved(ctx, eval.Spec.UserRef.Name); err != nil {
+			log.Info("failed to mirror approval onto BillingAccounts (non-fatal)",
+				"user", eval.Spec.UserRef.Name, "error", err)
+		}
+
 	default:
 		// Empty decision means we were called before status.decision was set
 		// (e.g. a stale read between Status().Update and the cache catching up).
@@ -646,4 +657,29 @@ func (r *FraudEvaluationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&fraudv1alpha1.FraudEvaluation{}).
 		Named("fraudevaluation").
 		Complete(r)
+}
+
+// markBillingAccountsApproved patches the PlatformAccessApproved condition
+// on every BillingAccount labeled with the given user's UID. Best-effort:
+// callers ignore the returned error.
+func (r *FraudEvaluationReconciler) markBillingAccountsApproved(ctx context.Context, userUID string) error {
+	var accounts billingv1alpha1.BillingAccountList
+	if err := r.List(ctx, &accounts, client.MatchingLabels{datasource.OwnerUserLabel: userUID}); err != nil {
+		return fmt.Errorf("listing BillingAccounts for user %q: %w", userUID, err)
+	}
+	for i := range accounts.Items {
+		acc := &accounts.Items[i]
+		patch := client.MergeFrom(acc.DeepCopy())
+		meta.SetStatusCondition(&acc.Status.Conditions, metav1.Condition{
+			Type:               billingv1alpha1.BillingAccountConditionPlatformAccessApproved,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: acc.Generation,
+			Reason:             "FraudEvaluationAccepted",
+			Message:            "Owning user passed fraud evaluation.",
+		})
+		if err := r.Status().Patch(ctx, acc, patch); err != nil {
+			return fmt.Errorf("patching BillingAccount %s/%s: %w", acc.Namespace, acc.Name, err)
+		}
+	}
+	return nil
 }

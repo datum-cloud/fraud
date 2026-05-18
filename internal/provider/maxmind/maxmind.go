@@ -72,8 +72,9 @@ func (c *Client) Name() string {
 
 // minfraudRequest represents the minFraud API request body.
 type minfraudRequest struct {
-	Device *deviceField `json:"device,omitempty"`
-	Email  *emailField  `json:"email,omitempty"`
+	Device     *deviceField     `json:"device,omitempty"`
+	Email      *emailField      `json:"email,omitempty"`
+	CreditCard *creditCardField `json:"credit_card,omitempty"`
 }
 
 type deviceField struct {
@@ -89,6 +90,21 @@ type deviceField struct {
 type emailField struct {
 	Address string `json:"address,omitempty"`
 	Domain  string `json:"domain,omitempty"`
+}
+
+// creditCardField mirrors the MaxMind minFraud `credit_card` sub-object.
+// Only fields the platform can reliably source from Stripe are exposed
+// here; full-PAN / 3DS-specific fields are intentionally omitted.
+type creditCardField struct {
+	Issuer     *creditCardIssuer `json:"issuer,omitempty"`
+	LastDigits string            `json:"last_digits,omitempty"`
+	Country    string            `json:"country,omitempty"`
+	AVSResult  string            `json:"avs_result,omitempty"`
+	CVVResult  string            `json:"cvv_result,omitempty"`
+}
+
+type creditCardIssuer struct {
+	IIN string `json:"iin,omitempty"`
 }
 
 // minfraudResponse represents the relevant fields from a minFraud Score response.
@@ -177,6 +193,20 @@ func buildRequest(input provider.Input) minfraudRequest {
 			Address: input.EmailAddress,
 			Domain:  input.EmailDomain,
 		}
+	}
+
+	// Build credit_card field if any card metadata is present.
+	if input.CreditCard.HasAny() {
+		cc := &creditCardField{
+			LastDigits: input.CreditCard.LastDigits,
+			Country:    input.CreditCard.Country,
+			AVSResult:  input.CreditCard.AVSResult,
+			CVVResult:  input.CreditCard.CVVResult,
+		}
+		if input.CreditCard.IssuerIDNumber != "" {
+			cc.Issuer = &creditCardIssuer{IIN: input.CreditCard.IssuerIDNumber}
+		}
+		req.CreditCard = cc
 	}
 
 	return req
