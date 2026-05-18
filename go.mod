@@ -102,4 +102,4 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace go.miloapis.com/billing => /Users/matthewjenkinson/Git/milo-os/billing
+replace go.miloapis.com/billing => github.com/milo-os/billing v0.1.1-0.20260518150055-210951d4d984
