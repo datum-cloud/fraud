@@ -1,6 +1,6 @@
 ---
-status: provisional|implementable|implemented|deferred|rejected|withdrawn|replaced
-stage: alpha|beta|stable
+status: provisional
+stage: alpha
 latest-milestone: "v0.x"
 ---
 <!--
@@ -60,7 +60,7 @@ should be approved by the remaining approvers and/or the owning SIG (or
 SIG Architecture for cross-cutting RFCs).
 -->
 
-# Short, descriptive title
+# Fraudulent Login Evaluation
 
 <!--
 This is the title of your Enhancement. Keep it short, simple, and descriptive. A good
@@ -115,12 +115,23 @@ updates.
 [documentation style guide]: https://github.com/kubernetes/community/blob/master/contributors/guide/style-guide.md
 -->
 
+This enhancement proposes shifting the responsibility of evaluating suspicious user logins and alerting users of anomalous access from the identity provider layer to the central fraud detection system. 
+
+Instead of the authentication gateway performing inline fraud risk checks and sending email alerts synchronously, it will delegate login event data directly to the fraud detection service. The fraud service then evaluates the login context against the user's historical session patterns to determine if it is anomalous (e.g., a new IP, browser, or device). When a suspicious login is identified, the fraud system automatically enriches the metadata with geographic location and device details and sends a security alert to the user.
+
 ## Motivation
 
 <!--
 This section is for explicitly listing the motivation, goals, and non-goals of
 this Enhancement.  Describe why the change is important and the benefits to users.
 -->
+
+Currently, the authentication provider is coupled with security and fraud rules. Evaluating whether a login context (IP, User-Agent, or Fingerprint) is anomalous requires knowledge of session histories, geolocation lookups, and user-agent analysis. Housing this capability inside the authentication gateway introduces several disadvantages:
+- **Feature Coupling**: The authentication system should focus exclusively on validating user credentials, rather than performing geolocation enrichment and complex risk analysis.
+- **Fragmented Fraud Policies**: Security policies and risk assessment logic are split across different systems, making it difficult to maintain and audit consistently.
+- **Lack of Central Audit Logging**: Suspicious login decisions are made in-memory and logged, but they are not stored as persistent audit records for security administrators.
+
+By centralizing login evaluation within the fraud system, we establish a clean separation of responsibilities, improve the auditability of security decisions, and ensure a unified security and fraud policy engine.
 
 ### Goals
 
@@ -129,12 +140,22 @@ List the specific goals of the Enhancement. What is it trying to achieve? How wi
 know that this has succeeded?
 -->
 
+- Decouple the login flow from fraud and alert policies.
+- Centralize login risk assessment within the dedicated fraud detection system.
+- Utilize historical user session characteristics to recognize anomalous login attempts.
+- Provide persistent audit records for all evaluated login attempts.
+- Deliver automated, metadata-enriched security notifications to users upon detection of suspicious logins.
+
 ### Non-Goals
 
 <!--
 What is out of scope for this Enhancement? Listing non-goals helps to focus discussion
 and make progress.
 -->
+
+- Modifying the Zitadel event delivery system or changing Zitadel webhook payloads.
+- Replacing or modifying the existing `FraudEvaluation` pipeline, which focuses on long-term user risk profiles rather than transient login events.
+- Creating an independent geo-IP database; the fraud operator will leverage the existing GraphQL gateway.
 
 ## Proposal
 
@@ -147,6 +168,15 @@ The "Design Details" section below is for the real
 nitty-gritty.
 -->
 
+We propose an event-driven flow for evaluating user login security:
+
+1. **Login Event Propagation**: Upon a new user login, the authentication system publishes a login attempt record containing the login context (IP, User-Agent, device fingerprint, and timestamp).
+2. **Historical Analysis**: The fraud system receives the login event and queries the historical record of that user's sessions.
+3. **Anomalous Context Detection**: The fraud system checks if the incoming login context is new or unseen compared to the user's past active sessions.
+4. **Metadata Enrichment**: If the login is flagged as anomalous, the fraud system translates the raw client IP and User-Agent strings into human-readable geographic locations and device descriptions.
+5. **Security Alerting**: The fraud system triggers a high-priority notification to alert the user of the suspicious access attempt.
+6. **Audit Persistence**: The outcome of the evaluation (whether flagged or not) is recorded in the fraud system's audit logs.
+
 ### User Stories (Optional)
 
 <!--
@@ -157,8 +187,10 @@ bogged down.
 -->
 
 #### Story 1
+As a User, I want to receive an email alert when a new login occurs on my account from a device or location I have not used before, so that I can secure my account.
 
 #### Story 2
+As a Security Admin, I want to query a list of login evaluations (`kubectl get loginevaluations`) to see all evaluated login events, their details, and whether they were flagged as fraudulent.
 
 ### Notes/Constraints/Caveats (Optional)
 
@@ -168,6 +200,9 @@ What are some important details that didn't come across above?
 Go in to as much detail as necessary here.
 This might be a good place to talk about core concepts and how they relate.
 -->
+
+- **Race Conditions**: When a new session is added, `Session` resources in the cluster may be updated asynchronously. The fraud controller must ignore the current session itself when looking at historical data to avoid comparing a login to itself.
+- **Gateway Availability**: Geolocation and user-agent parsing depend on the GraphQL gateway. If the gateway is down, the system should fall back gracefully to raw values.
 
 ### Risks and Mitigations
 
@@ -183,6 +218,11 @@ How will UX be reviewed, and by whom?
 Consider including folks who also work outside of your immediate team.
 -->
 
+- **Resource Proliferation**: A high volume of login events could produce many `LoginEvaluation` resources, leading to API server stress.
+  *Mitigation*: Implement a garbage-collection policy (e.g., TTL controller or owner references) to delete old `LoginEvaluation` resources after a configured retention period.
+- **Performance Overhead**: Fetching session lists and performing HTTP lookups during reconciliation can delay evaluation.
+  *Mitigation*: Use client caching for `Session` lookups, run network requests concurrently, and handle transient errors with proper exponential backoff retries.
+
 ## Design Details
 
 <!--
@@ -191,6 +231,71 @@ change are understandable. This may include API specs (though not always
 required) or even code snippets. If there's any ambiguity about HOW your
 proposal will be implemented, this is the place to discuss them.
 -->
+
+### LoginEvaluation CRD Schema
+
+The new custom resource `LoginEvaluation` will represent a login event under the `fraud.miloapis.com` group.
+
+```yaml
+apiVersion: fraud.miloapis.com/v1alpha1
+kind: LoginEvaluation
+metadata:
+  name: login-eval-sample
+  namespace: fraud-system
+spec:
+  # Reference to the User resource
+  userRef:
+    name: user-zitadel-id-123
+  # Optional email address used for this specific login attempt (essential when users can log in with different emails/OIDC providers)
+  loginEmail: "user@example.com"
+  # Context details about the login attempt
+  loginContext:
+    sessionID: sess-98765
+    ip: 203.0.113.88
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    fingerprintID: fp-ab12cd34
+    createdAt: "2026-06-17T16:11:00Z"
+status:
+  # Current phase: Pending, Running, Completed, Error
+  phase: Completed
+  # Evaluation result
+  isFraudulent: true
+  # Status conditions representing evaluation steps
+  conditions:
+    - type: Ready
+      status: "True"
+      lastTransitionTime: "2026-06-17T16:11:03Z"
+      reason: EvaluationCompleted
+      message: "Login evaluated and processed successfully."
+    - type: UserRefValid
+      status: "True"
+      lastTransitionTime: "2026-06-17T16:11:02Z"
+      reason: UserRefExists
+      message: "Subject user-zitadel-id-123 is valid and exists."
+    - type: NotificationSent
+      status: "True"
+      lastTransitionTime: "2026-06-17T16:11:03Z"
+      reason: NotificationDispatched
+      message: "Alert notification created for delivery."
+```
+
+### Sequence Diagram
+
+![Sequence Diagram](../diagrams/fraudulent-login-sequence.png)
+
+### Evaluation Logic & Flow
+
+1. **Triggering**: The Zitadel handler receives the `oidc_session.added` payload. Instead of running analysis logic, it builds a `LoginEvaluation` resource and writes it to the Kubernetes API.
+2. **Session Retrieval**: The fraud controller uses the UserRef from the spec to retrieve all existing `Session` resources under the `identity.miloapis.com/v1alpha1` group.
+3. **Suspicious Context Check**:
+   - The controller filters out the current session ID to avoid checking against itself.
+   - It checks if the current IP address, User-Agent string, or fingerprint ID matches any historical session records.
+   - If *none* of the historical sessions match the current IP, User-Agent, or fingerprint, the login is marked as suspicious.
+4. **Geolocation and UA Parsing**:
+   - The fraud controller calls the external GraphQL Gateway to get human-readable location details for the IP.
+   - The user agent string is resolved to determine the OS (device) and Browser.
+5. **Notification**:
+   - If flagged, a high-priority `Email` resource is created in the notification namespace, targeting the recipient user with variables: `UserName`, `Email`, `Location`, `SignInTime`, `Browser`, `Device`, and `IpAddress`.
 
 ## Production Readiness Review Questionnaire
 
@@ -514,11 +619,16 @@ Major milestones might include:
 - when the Enhancement was retired or superseded
 -->
 
+- **2026-06-17**: Initial enhancement proposal drafted (Alpha).
+
 ## Drawbacks
 
 <!--
 Why should this Enhancement _not_ be implemented?
 -->
+
+- **Increased API Overhead**: Each user login now triggers at least one additional write to the Kubernetes API server (`LoginEvaluation` creation) and several reads.
+- **Dependency on CRD**: If the `LoginEvaluation` CRD is deleted or misconfigured, it breaks the fraud-alert pipeline.
 
 ## Alternatives
 
@@ -528,9 +638,13 @@ not need to be as detailed as the proposal, but should include enough
 information to express the idea and why it was not acceptable.
 -->
 
+- **Kafka / Event Bus integration**: Send authentication events directly to a broker like Kafka or RabbitMQ, which the fraud operator listens to. While scalable, it introduces a massive external infrastructure requirement. Kubernetes CRDs offer a simple, native control plane fit for the existing environment.
+
 ## Infrastructure Needed (Optional)
 
 <!--
 Use this section if you need things from another party. Examples include a
 new repos, external services, compute infrastructure.
 -->
+
+None.
