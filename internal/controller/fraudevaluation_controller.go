@@ -34,10 +34,6 @@ const (
 	// enforcement resources have been successfully created in the Milo API server.
 	conditionEnforcementApplied = "EnforcementApplied"
 
-	// enforcementResourcePrefix is prepended to the FraudEvaluation name when
-	// naming IAM enforcement resources.
-	enforcementResourcePrefix = "fraud-"
-
 	// recentUserThreshold is the maximum age of a user for which the
 	// reconciler will retry resolution of incomplete session data.
 	recentUserThreshold = 2 * time.Minute
