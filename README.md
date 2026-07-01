@@ -62,6 +62,17 @@ Represents the fraud evaluation state for a specific user. Created to trigger an
 - **FraudPolicyReconciler** — Validates that all referenced providers exist and are available, sets policy conditions accordingly.
 - **FraudEvaluationReconciler** — Executes the evaluation pipeline: invokes providers, computes composite scores, applies thresholds, enforces decisions, and maintains evaluation history.
 
+### IAM Enforcement Integration
+
+When an evaluation completes under `AUTO` mode, the controller applies the decision directly to the user's access state by creating or patching a `PlatformAccess` resource (from the `iam.miloapis.com` API group) named exactly after the user:
+
+- **DEACTIVATE**: Sets state to `Suspended`.
+- **REVIEW**: Sets state to `Pending` (deferring enforcement to manual admin review).
+- **ACCEPTED**: Sets state to `Approved`.
+- **REJECT / REJECTED**: Sets state to `Rejected`.
+
+If the policy is in `OBSERVE` mode, the controller sets/patches the `PlatformAccess` state to `Approved` regardless of the decision, and annotates the resource with `fraud.miloapis.com/observe-mode: "true"`, `fraud.miloapis.com/observed-decision`, and `fraud.miloapis.com/observed-score`.
+
 ## Getting Started
 
 ### Prerequisites
