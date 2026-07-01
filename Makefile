@@ -201,7 +201,7 @@ MILO_REF ?= main
 MILO_IAM_CRDS_URL ?= https://github.com/milo-os/milo//config/crd/bases/iam?ref=$(MILO_REF)
 
 .PHONY: install-milo-crds
-install-milo-crds: ## Install milo IAM CRDs (PlatformAccessApproval, PlatformAccessRejection, etc.) needed by the controller cache informers in e2e.
+install-milo-crds: ## Install milo IAM CRDs (PlatformAccess, etc.) needed by the controller cache informers in e2e.
 	$(KUBECTL) apply -k $(MILO_IAM_CRDS_URL)
 
 .PHONY: uninstall-milo-crds

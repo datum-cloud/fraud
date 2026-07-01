@@ -64,22 +64,14 @@ rules:
 - apiGroups:
   - iam.miloapis.com
   resources:
-  - platformaccessapprovals
-  - platformaccessrejections
+  - platformaccesses
   verbs:
   - create
   - get
   - list
-  - watch
-- apiGroups:
-  - iam.miloapis.com
-  resources:
-  - userdeactivations
-  verbs:
-  - create
-  - get
   - patch
   - update
+  - watch
 - apiGroups:
   - iam.miloapis.com
   resources:

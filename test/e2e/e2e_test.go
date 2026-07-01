@@ -47,7 +47,7 @@ var _ = Describe("Fraud Operator", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
-		By("installing milo IAM CRDs (PlatformAccessApproval, etc.)")
+		By("installing milo IAM CRDs (PlatformAccess, etc.)")
 		cmd = exec.Command("make", "install-milo-crds")
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install milo IAM CRDs")

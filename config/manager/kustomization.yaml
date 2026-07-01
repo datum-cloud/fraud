@@ -8,4 +8,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: ghcr.io/milo-os/fraud
-  newTag: latest
+  newTag: e2e
