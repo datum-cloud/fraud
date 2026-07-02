@@ -1,0 +1,51 @@
+@startuml
+skinparam handwritten false
+skinparam participantPadding 10
+skinparam boxPadding 10
+
+box "Authentication System" #LightBlue
+participant "Zitadel Event Handler" as Zitadel
+end box
+
+box "Kubernetes Control Plane" #LightYellow
+database "K8s API Server" as K8s
+end box
+
+box "Fraud System" #LightPink
+participant "Fraud Controller" as FraudCtrl
+end box
+
+box "Notification System" #LightGreen
+participant "Notification Operator" as Notif
+end box
+
+== 1. Session Created Event ==
+Zitadel -> Zitadel: Webhook received:\noidc_session.added
+Zitadel -> K8s: Create LoginEvaluation resource\n(Spec: UserRef, loginEmail, LoginContext)
+
+== 2. Reconcile & Fraud Evaluation ==
+K8s -> FraudCtrl: Watch event: LoginEvaluation Created
+activate FraudCtrl
+
+FraudCtrl -> K8s: List Sessions (for UserRef)
+K8s --> FraudCtrl: Return historical Session resources
+
+FraudCtrl -> FraudCtrl: Compare current LoginContext\nagainst historical sessions\n(Compare IP, UserAgent, Fingerprint)
+
+alt Login is Fraudulent (Suspicious)
+    FraudCtrl -> K8s: Resolve Location (via GraphQL Gateway LookupIP)
+    K8s --> FraudCtrl: Return resolved Location details
+    FraudCtrl -> K8s: Parse User-Agent (via GraphQL Gateway ParseUserAgent)
+    K8s --> FraudCtrl: Return parsed Device & Browser
+    
+    FraudCtrl -> K8s: Create Email resource\n(Spec: Recipient, Template, Variables)
+    activate Notif
+    Notif -> K8s: Update Email status to Sent
+    deactivate Notif
+    
+    FraudCtrl -> K8s: Update LoginEvaluation Status\n(isFraudulent=true, phase=Completed)
+else Login is Normal
+    FraudCtrl -> K8s: Update LoginEvaluation Status\n(isFraudulent=false, phase=Completed)
+end
+deactivate FraudCtrl
+@enduml
