@@ -7,11 +7,11 @@ require (
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
 	github.com/prometheus/client_golang v1.23.2
-	go.miloapis.com/milo v0.24.8
+	go.miloapis.com/milo v0.29.1
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
-	sigs.k8s.io/controller-runtime v0.23.1
+	sigs.k8s.io/controller-runtime v0.23.3
 )
 
 require (

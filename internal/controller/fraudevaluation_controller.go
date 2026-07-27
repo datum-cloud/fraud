@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -35,10 +34,6 @@ const (
 	// enforcement resources have been successfully created in the Milo API server.
 	conditionEnforcementApplied = "EnforcementApplied"
 
-	// enforcementResourcePrefix is prepended to the FraudEvaluation name when
-	// naming IAM enforcement resources.
-	enforcementResourcePrefix = "fraud-"
-
 	// recentUserThreshold is the maximum age of a user for which the
 	// reconciler will retry resolution of incomplete session data.
 	recentUserThreshold = 2 * time.Minute
@@ -46,6 +41,9 @@ const (
 	// sessionDataRetryDelay is the requeue interval when waiting for
 	// a session record to become available for a recent user.
 	sessionDataRetryDelay = 5 * time.Second
+
+	// controllerFieldOwner is the field manager name used for Server-Side Apply tracking.
+	controllerFieldOwner = "fraudevaluation-controller"
 )
 
 // actionPriority maps decision strings to a numeric priority for comparison.
@@ -73,9 +71,7 @@ type FraudEvaluationReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=iam.miloapis.com,resources=users,verbs=get
-// +kubebuilder:rbac:groups=iam.miloapis.com,resources=userdeactivations,verbs=get;create;update;patch
-// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessapprovals,verbs=get;list;watch;create
-// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccessrejections,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=iam.miloapis.com,resources=platformaccesses,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=identity.miloapis.com,resources=sessions,verbs=list
 
 // Reconcile runs the fraud evaluation pipeline for a FraudEvaluation resource.
@@ -451,7 +447,7 @@ func (r *FraudEvaluationReconciler) setErrorPhase(ctx context.Context, eval *fra
 	return ctrl.Result{}, nil
 }
 
-// applyEnforcement creates IAM enforcement resources for a completed evaluation.
+// applyEnforcement creates/patches the PlatformAccess resource for a completed evaluation.
 // It is idempotent: if the EnforcementApplied condition is already True, it returns immediately.
 // Enforcement is only applied in AUTO mode; OBSERVE mode skips resource creation.
 func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *fraudv1alpha1.FraudEvaluation, policy *fraudv1alpha1.FraudPolicy) (ctrl.Result, error) {
@@ -462,138 +458,102 @@ func (r *FraudEvaluationReconciler) applyEnforcement(ctx context.Context, eval *
 		return ctrl.Result{}, nil
 	}
 
-	// OBSERVE mode: always approve the user so they are not blocked, but record
-	// what the real decision would have been. No deactivation is ever created.
+	userName := eval.Spec.UserRef.Name
+
+	// Determine desired state, reason, and annotations based on mode and decision.
+	var desiredState iamv1alpha1.PlatformAccessState
+	var reason string
+	var annotations map[string]string
+
 	if policy.Spec.Enforcement.Mode == fraudv1alpha1.EnforcementModeObserve {
-		log.Info("OBSERVE mode: approving user regardless of decision", "decision", eval.Status.Decision, "user", eval.Spec.UserRef.Name)
-
-		var paas iamv1alpha1.PlatformAccessApprovalList
-		if err := r.List(ctx, &paas, client.MatchingFields{"spec.subjectRef.userRef.name": eval.Spec.UserRef.Name}); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessApprovals for user %q: %w", eval.Spec.UserRef.Name, err)
+		log.Info("OBSERVE mode: approving user regardless of decision", "decision", eval.Status.Decision, "user", userName)
+		desiredState = iamv1alpha1.PlatformAccessStateApproved
+		reason = fmt.Sprintf("User approved (OBSERVE mode); observed decision was %s (score: %s)", eval.Status.Decision, eval.Status.CompositeScore)
+		annotations = map[string]string{
+			"fraud.miloapis.com/observe-mode":      "true",
+			"fraud.miloapis.com/observed-decision": eval.Status.Decision,
+			"fraud.miloapis.com/observed-score":    eval.Status.CompositeScore,
 		}
-		if len(paas.Items) == 0 {
-			resourceName := enforcementResourcePrefix + eval.Name
-			approval := &iamv1alpha1.PlatformAccessApproval{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: resourceName,
-					Annotations: map[string]string{
-						"fraud.miloapis.com/observe-mode":      "true",
-						"fraud.miloapis.com/observed-decision": eval.Status.Decision,
-						"fraud.miloapis.com/observed-score":    eval.Status.CompositeScore,
-					},
-				},
-				Spec: iamv1alpha1.PlatformAccessApprovalSpec{
-					SubjectRef: iamv1alpha1.SubjectReference{
-						UserRef: &iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
-					},
-				},
+	} else {
+		switch eval.Status.Decision {
+		case fraudv1alpha1.DecisionDeactivate:
+			desiredState = iamv1alpha1.PlatformAccessStateSuspended
+			reason = fmt.Sprintf("Automated deactivation from FraudEvaluation %q (score: %s)", eval.Name, eval.Status.CompositeScore)
+		case fraudv1alpha1.DecisionReview:
+			desiredState = iamv1alpha1.PlatformAccessStatePending
+			reason = fmt.Sprintf("Evaluation requires manual review for user %q (score: %s)", userName, eval.Status.CompositeScore)
+		case fraudv1alpha1.DecisionAccepted:
+			desiredState = iamv1alpha1.PlatformAccessStateApproved
+			reason = fmt.Sprintf("Automated approval from FraudEvaluation %q (score: %s)", eval.Name, eval.Status.CompositeScore)
+		case "REJECT", "REJECTED":
+			desiredState = iamv1alpha1.PlatformAccessStateRejected
+			reason = fmt.Sprintf("Automated rejection from FraudEvaluation %q (score: %s)", eval.Name, eval.Status.CompositeScore)
+		default:
+			if eval.Status.Decision == "" {
+				log.Info("decision not yet observed, requeueing for next reconcile", "eval", eval.Name)
+				return ctrl.Result{Requeue: true}, nil
 			}
-			if err := r.Create(ctx, approval); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to create observer PlatformAccessApproval %q: %w", resourceName, err)
-			}
-			log.Info("observer PlatformAccessApproval created", "name", resourceName, "user", eval.Spec.UserRef.Name)
+			log.Info("skipping enforcement for unrecognised decision", "decision", eval.Status.Decision)
+			return r.setEnforcementAppliedCondition(ctx, eval, "SkippedUnknownDecision", fmt.Sprintf("Enforcement skipped: unrecognised decision %q", eval.Status.Decision))
 		}
-
-		return r.setEnforcementAppliedCondition(ctx, eval, "ObserveMode",
-			fmt.Sprintf("User approved (OBSERVE mode); observed decision was %s (score: %s)", eval.Status.Decision, eval.Status.CompositeScore))
 	}
 
-	resourceName := enforcementResourcePrefix + eval.Name
-
-	switch eval.Status.Decision {
-	case fraudv1alpha1.DecisionDeactivate:
-		var existing iamv1alpha1.UserDeactivation
-		if err := r.Get(ctx, types.NamespacedName{Name: resourceName}, &existing); apierrors.IsNotFound(err) {
-			deactivation := &iamv1alpha1.UserDeactivation{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
-				Spec: iamv1alpha1.UserDeactivationSpec{
-					UserRef:       iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
-					Reason:        "fraud-deactivate",
-					Description:   fmt.Sprintf("Automated deactivation from FraudEvaluation %q (score: %s)", eval.Name, eval.Status.CompositeScore),
-					DeactivatedBy: "fraud-operator",
-				},
-			}
-			if err := r.Create(ctx, deactivation); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to create UserDeactivation %q: %w", resourceName, err)
-			}
-		} else if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get UserDeactivation %q: %w", resourceName, err)
+	// Create or patch PlatformAccess
+	var existing iamv1alpha1.PlatformAccess
+	err := r.Get(ctx, types.NamespacedName{Name: userName}, &existing)
+	if apierrors.IsNotFound(err) {
+		pa := &iamv1alpha1.PlatformAccess{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        userName,
+				Annotations: annotations,
+			},
+			Spec: iamv1alpha1.PlatformAccessSpec{
+				UserRef: iamv1alpha1.UserReference{Name: userName},
+				State:   desiredState,
+				Reason:  reason,
+			},
 		}
-
-		log.Info("UserDeactivation ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
-
-	case fraudv1alpha1.DecisionReview:
-		// REVIEW means the evaluation needs human attention — it does not
-		// automatically translate to a denial. Surface the state via the
-		// EnforcementApplied condition and leave any IAM action to an admin.
-		log.Info("review decision requires manual action; no IAM resource created",
-			"user", eval.Spec.UserRef.Name)
-		return r.setEnforcementAppliedCondition(
-			ctx, eval, "ReviewRequired",
-			fmt.Sprintf("Enforcement deferred: evaluation requires manual review for user %q", eval.Spec.UserRef.Name),
-		)
-
-	case fraudv1alpha1.DecisionAccepted:
-		// The IAM admission webhook denies PlatformAccessApproval creation if a
-		// PlatformAccessRejection already exists for the same subject. Check for
-		// one first and skip approval creation rather than retry-looping. The
-		// rejection may be intentional (admin-owned or from a prior REVIEW
-		// evaluation) so we do not auto-delete it — surface the conflict and
-		// require manual reconciliation.
-		var rejections iamv1alpha1.PlatformAccessRejectionList
-		if err := r.List(ctx, &rejections, client.MatchingFields{"spec.subjectRef.name": eval.Spec.UserRef.Name}); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessRejections for user %q: %w", eval.Spec.UserRef.Name, err)
+		if err := r.Create(ctx, pa, client.FieldOwner(controllerFieldOwner)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccess for user %q: %w", userName, err)
 		}
-		if len(rejections.Items) > 0 {
-			rejectionNames := make([]string, 0, len(rejections.Items))
-			for i := range rejections.Items {
-				rejectionNames = append(rejectionNames, rejections.Items[i].Name)
+		log.Info("PlatformAccess created", "user", userName, "state", desiredState)
+	} else if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get PlatformAccess for user %q: %w", userName, err)
+	} else {
+		basePA := existing.DeepCopy()
+		existing.Spec.State = desiredState
+		existing.Spec.Reason = reason
+		if annotations != nil {
+			if existing.Annotations == nil {
+				existing.Annotations = make(map[string]string)
 			}
-			log.Info("skipping PlatformAccessApproval creation: rejection already exists for user",
-				"user", eval.Spec.UserRef.Name,
-				"rejections", rejectionNames)
-			return r.setEnforcementAppliedCondition(
-				ctx, eval, "RejectionExists",
-				fmt.Sprintf("Enforcement skipped: existing PlatformAccessRejection(s) for user %q: %s", eval.Spec.UserRef.Name, strings.Join(rejectionNames, ", ")),
-			)
-		}
-
-		var paas iamv1alpha1.PlatformAccessApprovalList
-		if err := r.List(ctx, &paas, client.MatchingFields{"spec.subjectRef.userRef.name": eval.Spec.UserRef.Name}); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to list PlatformAccessApprovals for user %q: %w", eval.Spec.UserRef.Name, err)
-		}
-		if len(paas.Items) == 0 {
-			approval := &iamv1alpha1.PlatformAccessApproval{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
-				Spec: iamv1alpha1.PlatformAccessApprovalSpec{
-					SubjectRef: iamv1alpha1.SubjectReference{
-						UserRef: &iamv1alpha1.UserReference{Name: eval.Spec.UserRef.Name},
-					},
-				},
-			}
-			if err := r.Create(ctx, approval); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to create PlatformAccessApproval %q: %w", resourceName, err)
+			for k, v := range annotations {
+				existing.Annotations[k] = v
 			}
 		}
-
-		log.Info("PlatformAccessApproval ensured", "name", resourceName, "user", eval.Spec.UserRef.Name)
-
-	default:
-		// Empty decision means we were called before status.decision was set
-		// (e.g. a stale read between Status().Update and the cache catching up).
-		// Returning a non-terminal condition would lock the eval forever via the
-		// EnforcementApplied=True short-circuit at the top of this function. Just
-		// requeue and let the next reconcile observe the real decision.
-		if eval.Status.Decision == "" {
-			log.Info("decision not yet observed, requeueing for next reconcile", "eval", eval.Name)
-			return ctrl.Result{Requeue: true}, nil
+		if err := r.Patch(ctx, &existing, client.MergeFrom(basePA), client.FieldOwner(controllerFieldOwner)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to patch PlatformAccess for user %q: %w", userName, err)
 		}
-		// Unknown or legacy decision value — log and skip enforcement rather than error-looping.
-		log.Info("skipping enforcement for unrecognised decision", "decision", eval.Status.Decision)
-		return r.setEnforcementAppliedCondition(ctx, eval, "SkippedUnknownDecision", fmt.Sprintf("Enforcement skipped: unrecognised decision %q", eval.Status.Decision))
+		log.Info("PlatformAccess updated", "user", userName, "state", desiredState)
 	}
 
-	return r.setEnforcementAppliedCondition(ctx, eval, "EnforcementApplied", fmt.Sprintf("Enforcement applied for decision %s", eval.Status.Decision))
+	var condReason string
+	if policy.Spec.Enforcement.Mode == fraudv1alpha1.EnforcementModeObserve {
+		condReason = "ObserveMode"
+	} else {
+		switch eval.Status.Decision {
+		case fraudv1alpha1.DecisionDeactivate:
+			condReason = "DeactivationApplied"
+		case fraudv1alpha1.DecisionReview:
+			condReason = "ReviewRequired"
+		case fraudv1alpha1.DecisionAccepted:
+			condReason = "EnforcementApplied"
+		case "REJECT", "REJECTED":
+			condReason = "RejectionApplied"
+		}
+	}
+
+	return r.setEnforcementAppliedCondition(ctx, eval, condReason, reason)
 }
 
 // setEnforcementAppliedCondition patches the EnforcementApplied condition onto the evaluation status.
@@ -627,49 +587,6 @@ func (r *FraudEvaluationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		},
 	); err != nil {
 		return err
-	}
-
-	// applyEnforcement uses client.MatchingFields on PlatformAccessApproval to
-	// detect whether an approval already exists for the user before creating
-	// one. The cached client requires a registered IndexField for that lookup,
-	// even though spec.subjectRef.userRef.name is already a server-side
-	// selectable field on the CRD.
-	if err := mgr.GetFieldIndexer().IndexField(
-		context.Background(),
-		&iamv1alpha1.PlatformAccessApproval{},
-		"spec.subjectRef.userRef.name",
-		func(obj client.Object) []string {
-			paa, ok := obj.(*iamv1alpha1.PlatformAccessApproval)
-			if !ok {
-				return nil
-			}
-			if paa.Spec.SubjectRef.UserRef == nil {
-				return nil
-			}
-			return []string{paa.Spec.SubjectRef.UserRef.Name}
-		},
-	); err != nil {
-		return fmt.Errorf("failed to set field index on PlatformAccessApproval: %w", err)
-	}
-
-	// applyEnforcement also uses client.MatchingFields on PlatformAccessRejection
-	// to detect whether a rejection already exists for the user before attempting
-	// to create an approval (which the IAM admission webhook would otherwise
-	// deny). Note the field path is the flat spec.subjectRef.name — different
-	// from PAA's nested spec.subjectRef.userRef.name.
-	if err := mgr.GetFieldIndexer().IndexField(
-		context.Background(),
-		&iamv1alpha1.PlatformAccessRejection{},
-		"spec.subjectRef.name",
-		func(obj client.Object) []string {
-			par, ok := obj.(*iamv1alpha1.PlatformAccessRejection)
-			if !ok {
-				return nil
-			}
-			return []string{par.Spec.UserRef.Name}
-		},
-	); err != nil {
-		return fmt.Errorf("failed to set field index on PlatformAccessRejection: %w", err)
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).

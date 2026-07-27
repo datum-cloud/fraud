@@ -67,19 +67,19 @@ var _ = Describe("FraudEvaluation Controller", func() {
 				_ = k8sClient.Delete(ctx, &providerList.Items[i])
 			}
 
-			deactivationList := &iamv1alpha1.UserDeactivationList{}
+			deactivationList := &iamv1alpha1.PlatformAccessList{}
 			Expect(k8sClient.List(ctx, deactivationList)).To(Succeed())
 			for i := range deactivationList.Items {
 				_ = k8sClient.Delete(ctx, &deactivationList.Items[i])
 			}
 
-			approvalList := &iamv1alpha1.PlatformAccessApprovalList{}
+			approvalList := &iamv1alpha1.PlatformAccessList{}
 			Expect(k8sClient.List(ctx, approvalList)).To(Succeed())
 			for i := range approvalList.Items {
 				_ = k8sClient.Delete(ctx, &approvalList.Items[i])
 			}
 
-			rejectionList := &iamv1alpha1.PlatformAccessRejectionList{}
+			rejectionList := &iamv1alpha1.PlatformAccessList{}
 			Expect(k8sClient.List(ctx, rejectionList)).To(Succeed())
 			for i := range rejectionList.Items {
 				_ = k8sClient.Delete(ctx, &rejectionList.Items[i])
@@ -208,12 +208,12 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionDeactivate))
 			Expect(eval.Status.EnforcementAction).To(Equal("ENFORCED"))
 
-			// Verify the UserDeactivation resource was created.
-			deactivation := &iamv1alpha1.UserDeactivation{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-deactivate"}, deactivation)).To(Succeed())
+			// Verify the PlatformAccess resource was created.
+			deactivation := &iamv1alpha1.PlatformAccess{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "user-3"}, deactivation)).To(Succeed())
 			Expect(deactivation.Spec.UserRef.Name).To(Equal("user-3"))
-			Expect(deactivation.Spec.Reason).To(Equal("fraud-deactivate"))
-			Expect(deactivation.Spec.DeactivatedBy).To(Equal("fraud-operator"))
+			Expect(deactivation.Spec.State).To(Equal(iamv1alpha1.PlatformAccessStateSuspended))
+			Expect(deactivation.Spec.Reason).To(ContainSubstring("Automated deactivation from FraudEvaluation"))
 
 			// Verify EnforcementApplied condition is set.
 			Expect(eval.Status.Conditions).To(ContainElement(
@@ -553,7 +553,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(eval.Status.History).To(HaveLen(1))
 		})
 
-		It("AUTO mode REVIEW decision should defer enforcement, not create a PlatformAccessRejection", func() {
+		It("AUTO mode REVIEW decision should defer enforcement, creating a PlatformAccess with Pending state", func() {
 			createResources(75, "FailOpen", "AUTO")
 
 			eval := &fraudv1alpha1.FraudEvaluation{
@@ -573,10 +573,10 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-review-auto"}, eval)).To(Succeed())
 			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionReview))
 
-			// No PAR should be created — REVIEW now defers to human review.
-			parList := &iamv1alpha1.PlatformAccessRejectionList{}
-			Expect(k8sClient.List(ctx, parList)).To(Succeed())
-			Expect(parList.Items).To(BeEmpty())
+			// Verify PlatformAccess with Pending state is created.
+			pa := &iamv1alpha1.PlatformAccess{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "user-review"}, pa)).To(Succeed())
+			Expect(pa.Spec.State).To(Equal(iamv1alpha1.PlatformAccessStatePending))
 
 			// EnforcementApplied condition should reflect the deferral.
 			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
@@ -605,10 +605,10 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-accepted-auto"}, eval)).To(Succeed())
 			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionAccepted))
 
-			approval := &iamv1alpha1.PlatformAccessApproval{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-accepted-auto"}, approval)).To(Succeed())
-			Expect(approval.Spec.SubjectRef.UserRef).NotTo(BeNil())
-			Expect(approval.Spec.SubjectRef.UserRef.Name).To(Equal("user-accepted"))
+			approval := &iamv1alpha1.PlatformAccess{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "user-accepted"}, approval)).To(Succeed())
+			Expect(approval.Spec.State).To(Equal(iamv1alpha1.PlatformAccessStateApproved))
+			Expect(approval.Spec.UserRef.Name).To(Equal("user-accepted"))
 		})
 
 		It("OBSERVE mode should approve the user and not create any deactivation resources", func() {
@@ -628,14 +628,10 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// No UserDeactivation should be created even for a high-score user.
-			deactivation := &iamv1alpha1.UserDeactivation{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-observe-noiam"}, deactivation)
-			Expect(err).To(HaveOccurred())
-
-			// A PlatformAccessApproval should be created so the user is not blocked.
-			approval := &iamv1alpha1.PlatformAccessApproval{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fraud-eval-observe-noiam"}, approval)).To(Succeed())
+			// A PlatformAccess should be created with state Approved.
+			approval := &iamv1alpha1.PlatformAccess{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "user-observe"}, approval)).To(Succeed())
+			Expect(approval.Spec.State).To(Equal(iamv1alpha1.PlatformAccessStateApproved))
 			Expect(approval.Annotations).To(HaveKeyWithValue("fraud.miloapis.com/observe-mode", "true"))
 			Expect(approval.Annotations).To(HaveKeyWithValue("fraud.miloapis.com/observed-decision", fraudv1alpha1.DecisionDeactivate))
 
@@ -668,7 +664,7 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Still only one UserDeactivation.
-			deactivationList := &iamv1alpha1.UserDeactivationList{}
+			deactivationList := &iamv1alpha1.PlatformAccessList{}
 			Expect(k8sClient.List(ctx, deactivationList)).To(Succeed())
 			Expect(deactivationList.Items).To(HaveLen(1))
 		})
@@ -694,21 +690,20 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			_, err = reconciler.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 
-			paaList := &iamv1alpha1.PlatformAccessApprovalList{}
+			paaList := &iamv1alpha1.PlatformAccessList{}
 			Expect(k8sClient.List(ctx, paaList)).To(Succeed())
 			Expect(paaList.Items).To(HaveLen(1))
 		})
 
-		It("should skip PAA creation if user already has an approval from a prior evaluation", func() {
+		It("should update PlatformAccess if user already has an approval from a prior evaluation", func() {
 			createResources(15, "FailOpen", "AUTO")
 
-			// Pre-create a PAA for the user under a different name (simulating a prior evaluation).
-			prior := &iamv1alpha1.PlatformAccessApproval{
-				ObjectMeta: metav1.ObjectMeta{Name: "prior-eval-approval"},
-				Spec: iamv1alpha1.PlatformAccessApprovalSpec{
-					SubjectRef: iamv1alpha1.SubjectReference{
-						UserRef: &iamv1alpha1.UserReference{Name: "user-preapproved"},
-					},
+			prior := &iamv1alpha1.PlatformAccess{
+				ObjectMeta: metav1.ObjectMeta{Name: "user-preapproved"},
+				Spec: iamv1alpha1.PlatformAccessSpec{
+					UserRef: iamv1alpha1.UserReference{Name: "user-preapproved"},
+					State:   iamv1alpha1.PlatformAccessStateApproved,
+					Reason:  "prior-reason",
 				},
 			}
 			Expect(k8sClient.Create(ctx, prior)).To(Succeed())
@@ -731,11 +726,15 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(eval.Status.Phase).To(Equal(fraudv1alpha1.PhaseCompleted))
 			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionAccepted))
 
-			// Only the pre-existing PAA should be present — no new one created.
-			paaList := &iamv1alpha1.PlatformAccessApprovalList{}
-			Expect(k8sClient.List(ctx, paaList)).To(Succeed())
-			Expect(paaList.Items).To(HaveLen(1))
-			Expect(paaList.Items[0].Name).To(Equal("prior-eval-approval"))
+			pa := &iamv1alpha1.PlatformAccess{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "user-preapproved"}, pa)).To(Succeed())
+			Expect(pa.Spec.State).To(Equal(iamv1alpha1.PlatformAccessStateApproved))
+			Expect(pa.Spec.Reason).To(ContainSubstring("Automated approval from FraudEvaluation \"eval-preapproved\""))
+
+			// Only one PlatformAccess should be present.
+			paList := &iamv1alpha1.PlatformAccessList{}
+			Expect(k8sClient.List(ctx, paList)).To(Succeed())
+			Expect(paList.Items).To(HaveLen(1))
 
 			// EnforcementApplied condition should still be set.
 			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
@@ -743,21 +742,18 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 		})
 
-		It("should skip PAA creation if user already has a PlatformAccessRejection", func() {
+		It("should update PlatformAccess to Approved even if user already has a PlatformAccess rejection", func() {
 			createResources(15, "FailOpen", "AUTO")
 
-			// Pre-create a rejection for the user (e.g. from a prior REVIEW
-			// evaluation or admin action). The IAM webhook would block any
-			// PAA create for the same subject; the controller must detect
-			// this and skip rather than retry-loop.
-			rejection := &iamv1alpha1.PlatformAccessRejection{
-				ObjectMeta: metav1.ObjectMeta{Name: "prior-eval-rejection"},
-				Spec: iamv1alpha1.PlatformAccessRejectionSpec{
+			prior := &iamv1alpha1.PlatformAccess{
+				ObjectMeta: metav1.ObjectMeta{Name: "user-prerejected"},
+				Spec: iamv1alpha1.PlatformAccessSpec{
 					UserRef: iamv1alpha1.UserReference{Name: "user-prerejected"},
-					Reason:  "fraud-review",
+					State:   iamv1alpha1.PlatformAccessStateRejected,
+					Reason:  "prior-rejection",
 				},
 			}
-			Expect(k8sClient.Create(ctx, rejection)).To(Succeed())
+			Expect(k8sClient.Create(ctx, prior)).To(Succeed())
 
 			eval := &fraudv1alpha1.FraudEvaluation{
 				ObjectMeta: metav1.ObjectMeta{Name: "eval-prerejected"},
@@ -776,17 +772,16 @@ var _ = Describe("FraudEvaluation Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "eval-prerejected"}, eval)).To(Succeed())
 			Expect(eval.Status.Decision).To(Equal(fraudv1alpha1.DecisionAccepted))
 
-			// No PAA should have been created.
-			paaList := &iamv1alpha1.PlatformAccessApprovalList{}
-			Expect(k8sClient.List(ctx, paaList)).To(Succeed())
-			Expect(paaList.Items).To(BeEmpty())
+			// The PlatformAccess should be updated to Approved.
+			pa := &iamv1alpha1.PlatformAccess{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "user-prerejected"}, pa)).To(Succeed())
+			Expect(pa.Spec.State).To(Equal(iamv1alpha1.PlatformAccessStateApproved))
 
-			// EnforcementApplied condition should be set with RejectionExists reason.
+			// EnforcementApplied condition should be set with EnforcementApplied reason.
 			cond := meta.FindStatusCondition(eval.Status.Conditions, conditionEnforcementApplied)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
-			Expect(cond.Reason).To(Equal("RejectionExists"))
-			Expect(cond.Message).To(ContainSubstring("prior-eval-rejection"))
+			Expect(cond.Reason).To(Equal("EnforcementApplied"))
 		})
 
 		// Regression: in prod we observed evaluations stuck with status.decision=ACCEPTED
