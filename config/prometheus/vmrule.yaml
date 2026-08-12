@@ -17,6 +17,8 @@ spec:
           for: 5m
           labels:
             severity: critical
+            service: fraud
+            team: platform
           annotations:
             summary: "Fraud operator is down"
             description: "The fraud operator has been unreachable for 5+ minutes. Fraud evaluations will not be processed."
@@ -31,6 +33,8 @@ spec:
           for: 5m
           labels:
             severity: critical
+            service: fraud
+            team: platform
           annotations:
             summary: "High error rate for fraud provider {{ $labels.provider }}"
             description: "{{ $value | humanizePercentage }} of calls to provider {{ $labels.provider }} are failing. With FailClosed policy, evaluations will be blocked until this is resolved."
@@ -43,6 +47,8 @@ spec:
           for: 5m
           labels:
             severity: warning
+            service: fraud
+            team: platform
           annotations:
             summary: "High latency for fraud provider {{ $labels.provider }}"
             description: "P99 latency for provider {{ $labels.provider }} is {{ $value }}s, exceeding the 5s threshold."
@@ -57,6 +63,8 @@ spec:
           for: 10m
           labels:
             severity: warning
+            service: fraud
+            team: platform
           annotations:
             summary: "High reconciliation error rate for fraud evaluations"
             description: "{{ $value | humanizePercentage }} of fraud evaluation reconciliations are failing."
@@ -70,6 +78,8 @@ spec:
           for: 15m
           labels:
             severity: warning
+            service: fraud
+            team: platform
           annotations:
             summary: "Fraud evaluations stuck in Error phase"
             description: "{{ $value }} fraud evaluation(s) have been in the Error phase for 15+ minutes. This may indicate a persistent provider failure or misconfiguration."
@@ -80,6 +90,8 @@ spec:
           for: 5m
           labels:
             severity: warning
+            service: fraud
+            team: platform
           annotations:
             summary: "Fraud evaluation {{ $labels.name }} is degraded"
             description: "Fraud evaluation {{ $labels.name }} has been in a degraded state for 5+ minutes, indicating one or more providers returned errors during evaluation."
@@ -91,6 +103,8 @@ spec:
           labels:
             severity: warning
             slack_channel: user-bot
+            service: fraud
+            team: platform
           annotations:
             summary: "Fraud check returned {{ $labels.decision }} for user {{ $labels.user_ref }}"
             description: "FraudEvaluation {{ $labels.name }} returned decision={{ $labels.decision }} for user {{ $labels.user_ref }}. Review the user and take action if needed."
